@@ -36,7 +36,7 @@ Http::withClientIdentity()
     ->post('https://provider.example/api/things', [...]);
 ```
 
-The identity is resolved lazily, at call time. The macro never truncates or mutates the identity: a resolved identity that violates the wire contract below (over 255 bytes, or containing a line break) throws an `InvalidArgumentException` instead of being sent.
+The identity is resolved lazily, at call time. The macro never truncates or mutates the identity: a resolved identity that violates the wire contract below (not valid UTF-8, over 255 bytes, or containing a CR or LF octet) throws an `InvalidArgumentException` instead of being sent. The macro also replaces any pre-existing `X-BfC-Client-Id` header (for example one set via `Http::globalOptions()`), so the validated identity is the only value on the wire.
 
 ## Wire contract
 
@@ -44,7 +44,7 @@ The wire contract between a client app and its BfC provider is documented here a
 
 - **Client identity header** (`X-BfC-Client-Id`)
   - **Header name:** `X-BfC-Client-Id`.
-  - **Value:** the resolved client identity — an opaque, stable string of 1–255 bytes of UTF-8 with no line breaks. Providers MUST treat it as an opaque identifier: compare byte-wise and store verbatim. Providers MUST NOT treat it as a credential or grant anything based on it alone.
+  - **Value:** the resolved client identity — an opaque, stable string of valid UTF-8, 1–255 bytes, containing no CR (`\r`) or LF (`\n`) octets. (Literal CR/LF octets are the header-injection hazard; exotic Unicode separators such as U+2028 are permitted and treated as opaque bytes.) Providers MUST treat it as an opaque identifier: compare byte-wise and store verbatim. Providers MUST NOT treat it as a credential or grant anything based on it alone.
   - **When sent:** on requests the client app makes to its provider using `Http::withClientIdentity()`, typically alongside its normal token auth. The client never sends a value outside the limits above — it fails loudly instead.
   - **Provider behaviour (informative):** a BfC provider records the identity against the API token that authenticated the request (per-token client identity), enabling token→client attribution.
 - **Proof-of-life route** — coming in a later release.
