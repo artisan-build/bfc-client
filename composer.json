@@ -6,6 +6,7 @@
     "type": "library",
     "require": {
         "php": "^8.3",
+        "illuminate/cache": "^13.0",
         "illuminate/contracts": "^13.0",
         "illuminate/filesystem": "^13.0",
         "illuminate/http": "^13.0",
