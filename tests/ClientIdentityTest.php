@@ -50,6 +50,41 @@ it('returns an existing persisted identity as-is without regenerating it', funct
         ->toBe('seeded-identity-value');
 });
 
+it('throws when the identity cannot be persisted', function () {
+    $files = new class extends Filesystem
+    {
+        public function put($path, $contents, $lock = false)
+        {
+            return false;
+        }
+    };
+
+    $identity = new ClientIdentity($this->app->make('config'), $files);
+
+    expect(fn () => $identity->resolve())
+        ->toThrow(RuntimeException::class, storage_path('app/bfc-client/identity'));
+});
+
+it('regenerates when the persisted identity file is empty or whitespace', function () {
+    $files = new Filesystem;
+    $files->ensureDirectoryExists(storage_path('app/bfc-client'), 0755);
+    $files->put(storage_path('app/bfc-client/identity'), "  \n");
+
+    $resolved = $this->app->make(ClientIdentity::class)->resolve();
+
+    expect(Str::isUuid($resolved))->toBeTrue()
+        ->and(trim((string) file_get_contents(storage_path('app/bfc-client/identity'))))->toBe($resolved);
+});
+
+it('ignores a non-string config identity and falls through the chain', function () {
+    config()->set('bfc-client.identity', 123);
+
+    $resolved = $this->app->make(ClientIdentity::class)->resolve();
+
+    expect(Str::isUuid($resolved))->toBeTrue()
+        ->and(trim((string) file_get_contents(storage_path('app/bfc-client/identity'))))->toBe($resolved);
+});
+
 it('generates valid uuids that differ between clean installs', function () {
     $config = $this->app->make('config');
 
