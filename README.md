@@ -19,7 +19,7 @@ php artisan vendor:publish --tag=bfc-client-config
 `ArtisanBuild\BfcClient\ClientIdentity` (a container singleton) resolves a stable identifier for the installation via `resolve()`:
 
 1. **Explicit config** — when `bfc-client.identity` (the `BFC_CLIENT_IDENTITY` env var) is a non-empty string, it is returned verbatim and never persisted.
-2. **Persisted file** — otherwise the identity stored at `storage_path('app/bfc-client/identity')` is returned.
+2. **Persisted file** — otherwise the identity stored at `storage_path('app/bfc-client/identity')` is returned (the value is read back trimmed).
 3. **Generated** — otherwise a UUID is generated, persisted to that file, and reused on subsequent resolutions.
 
 The identity is an identifier, never a secret. Installs on ephemeral filesystems should set `BFC_CLIENT_IDENTITY` explicitly — otherwise the generated identity will churn on every redeploy.
