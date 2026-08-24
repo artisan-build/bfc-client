@@ -20,6 +20,16 @@ it('responds at the default path with exactly the package name and client identi
     ]);
 });
 
+it('fails loudly instead of serving a contract-violating identity', function () {
+    config()->set('bfc-client.identity', "bad\nidentity");
+
+    $response = $this->getJson('/bfc-client');
+
+    $response->assertStatus(500);
+
+    expect($response->getContent())->not->toContain("bad\nidentity");
+});
+
 it('never leaks the application key in the response', function () {
     config()->set('app.key', 'base64:'.base64_encode('bfc-proof-of-life-canary-secret!'));
     config()->set('bfc-client.identity', 'proof-of-life-identity-pr4');

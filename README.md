@@ -47,7 +47,7 @@ curl https://client-app.example/bfc-client
 # {"package":"artisan-build/bfc-client","client_id":"0198c5f2-..."}
 ```
 
-The route is unauthenticated (the identity is an identifier, never a secret), throttled to 60 requests per minute, and returns nothing beyond the package name and the resolved identity. Move it with `BFC_CLIENT_PROOF_OF_LIFE_PATH`, or disable it entirely with `BFC_CLIENT_PROOF_OF_LIFE=false`.
+The route is unauthenticated (the identity is an identifier, never a secret), throttled to 60 requests per minute, and returns nothing beyond the package name and the resolved identity; an identity that violates the wire contract's limits fails loudly (a 500) rather than being served. Move it with `BFC_CLIENT_PROOF_OF_LIFE_PATH`, or disable it entirely with `BFC_CLIENT_PROOF_OF_LIFE=false`.
 
 ## Wire contract
 

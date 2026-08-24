@@ -12,7 +12,6 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Router;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
-use InvalidArgumentException;
 
 final class BfcClientServiceProvider extends ServiceProvider
 {
@@ -31,22 +30,10 @@ final class BfcClientServiceProvider extends ServiceProvider
 
         Factory::macro('withClientIdentity', function (): PendingRequest {
             /** @var Factory $this */
-            $identity = app(ClientIdentity::class)->resolve();
-
-            if (
-                ! mb_check_encoding($identity, 'UTF-8')
-                || strlen($identity) > 255
-                || strpbrk($identity, "\r\n") !== false
-            ) {
-                throw new InvalidArgumentException(
-                    'The resolved client identity must be valid UTF-8, at most 255 bytes, and contain no CR or LF octets.'
-                );
-            }
-
             // replaceHeaders, not withHeaders: the validated identity must be
             // the ONLY value on the wire, even when a conflicting header was
             // pre-set via Http::globalOptions().
-            return $this->replaceHeaders([BfcHeaders::CLIENT_ID => $identity]);
+            return $this->replaceHeaders([BfcHeaders::CLIENT_ID => app(ClientIdentity::class)->validated()]);
         });
 
         $this->registerProofOfLifeRoute();

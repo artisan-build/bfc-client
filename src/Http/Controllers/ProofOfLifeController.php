@@ -19,7 +19,7 @@ final class ProofOfLifeController
     {
         return new JsonResponse([
             'package' => 'artisan-build/bfc-client',
-            'client_id' => $identity->resolve(),
+            'client_id' => $identity->validated(),
         ]);
     }
 }
