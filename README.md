@@ -24,11 +24,29 @@ php artisan vendor:publish --tag=bfc-client-config
 
 The identity is an identifier, never a secret. Installs on ephemeral filesystems should set `BFC_CLIENT_IDENTITY` explicitly — otherwise the generated identity will churn on every redeploy.
 
+## Attaching the identity to requests
+
+The package registers an HTTP client macro, `Http::withClientIdentity()`, that returns a pending request carrying the identity header. It composes with every other pending-request option:
+
+```php
+use Illuminate\Support\Facades\Http;
+
+Http::withClientIdentity()
+    ->withToken($token)
+    ->post('https://provider.example/api/things', [...]);
+```
+
+The identity is resolved lazily, at call time. The macro never truncates or mutates the identity: a resolved identity that violates the wire contract below (over 255 bytes, or containing a line break) throws an `InvalidArgumentException` instead of being sent.
+
 ## Wire contract
 
 The wire contract between a client app and its BfC provider is documented here as each piece lands:
 
-- **Client identity header** (`X-BfC-Client-Id`) — coming in a later release.
+- **Client identity header** (`X-BfC-Client-Id`)
+  - **Header name:** `X-BfC-Client-Id`.
+  - **Value:** the resolved client identity — an opaque, stable string of 1–255 bytes of UTF-8 with no line breaks. Providers MUST treat it as an opaque identifier: compare byte-wise and store verbatim. Providers MUST NOT treat it as a credential or grant anything based on it alone.
+  - **When sent:** on requests the client app makes to its provider using `Http::withClientIdentity()`, typically alongside its normal token auth. The client never sends a value outside the limits above — it fails loudly instead.
+  - **Provider behaviour (informative):** a BfC provider records the identity against the API token that authenticated the request (per-token client identity), enabling token→client attribution.
 - **Proof-of-life route** — coming in a later release.
 
 ## License
