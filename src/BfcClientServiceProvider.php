@@ -4,10 +4,14 @@ declare(strict_types=1);
 
 namespace ArtisanBuild\BfcClient;
 
+use ArtisanBuild\BfcClient\Http\Controllers\ProofOfLifeController;
+use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Client\Factory;
 use Illuminate\Http\Client\PendingRequest;
+use Illuminate\Http\Request;
+use Illuminate\Routing\Router;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
-use InvalidArgumentException;
 
 final class BfcClientServiceProvider extends ServiceProvider
 {
@@ -26,22 +30,39 @@ final class BfcClientServiceProvider extends ServiceProvider
 
         Factory::macro('withClientIdentity', function (): PendingRequest {
             /** @var Factory $this */
-            $identity = app(ClientIdentity::class)->resolve();
-
-            if (
-                ! mb_check_encoding($identity, 'UTF-8')
-                || strlen($identity) > 255
-                || strpbrk($identity, "\r\n") !== false
-            ) {
-                throw new InvalidArgumentException(
-                    'The resolved client identity must be valid UTF-8, at most 255 bytes, and contain no CR or LF octets.'
-                );
-            }
-
             // replaceHeaders, not withHeaders: the validated identity must be
             // the ONLY value on the wire, even when a conflicting header was
             // pre-set via Http::globalOptions().
-            return $this->replaceHeaders([BfcHeaders::CLIENT_ID => $identity]);
+            return $this->replaceHeaders([BfcHeaders::CLIENT_ID => app(ClientIdentity::class)->validated()]);
         });
+
+        $this->registerProofOfLifeRoute();
+    }
+
+    /**
+     * The proof-of-life route is unauthenticated by design: the identity it
+     * returns is an identifier, never a secret, and providers poll it
+     * without credentials. It is throttled and can be disabled or moved
+     * via config.
+     *
+     * The limiter is named and keyed on the IP rather than inline
+     * (`throttle:60,1`): the inline form builds its signature via
+     * `$request->user()`, which throws on a headless app with no auth
+     * guard at all, 500ing every request to the route.
+     */
+    private function registerProofOfLifeRoute(): void
+    {
+        if (! config('bfc-client.proof_of_life.enabled') || ! $this->app->bound('router')) {
+            return;
+        }
+
+        RateLimiter::for('bfc-client', fn (Request $request): Limit => Limit::perMinute(60)->by($request->ip() ?? 'unknown'));
+
+        /** @var Router $router */
+        $router = $this->app->make('router');
+
+        $router->get((string) config('bfc-client.proof_of_life.path'), ProofOfLifeController::class)
+            ->name('bfc-client.proof-of-life')
+            ->middleware('throttle:bfc-client');
     }
 }
