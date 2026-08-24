@@ -77,6 +77,25 @@ it('rejects an identity containing a carriage return', function () {
     Http::withClientIdentity();
 })->throws(InvalidArgumentException::class);
 
+// A NUL is valid UTF-8 and is neither CR nor LF, so it clears every other
+// limit; it is rejected on its own account because PostgreSQL truncates a
+// stored value at the first NUL, collapsing byte-distinct identities.
+it('rejects an identity containing a NUL byte', function () {
+    config()->set('bfc-client.identity', "client\0one");
+
+    Http::fake();
+
+    Http::withClientIdentity();
+})->throws(InvalidArgumentException::class);
+
+it('rejects an identity that is only a NUL byte', function () {
+    config()->set('bfc-client.identity', "\0");
+
+    Http::fake();
+
+    Http::withClientIdentity();
+})->throws(InvalidArgumentException::class);
+
 it('rejects an identity that is not valid UTF-8', function () {
     config()->set('bfc-client.identity', "\xC3\x28");
 
