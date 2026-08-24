@@ -9,12 +9,17 @@ return [
     | Client Identity
     |--------------------------------------------------------------------------
     |
-    | An explicit, stable identifier for this client installation, used by a
-    | BfC provider to attribute API traffic to a specific client app. This is
+    | A stable identifier for this client installation, used by a BfC
+    | provider to attribute API traffic to a specific client app. This is
     | an IDENTIFIER, never a secret — it grants nothing on its own.
     |
-    | When null, no explicit identity is configured. Automatic resolution and
-    | generation of a stable identity lands in a later release.
+    | Resolution order: when this value is a non-empty string it is used
+    | verbatim (and never persisted). Otherwise the identity persisted at
+    | storage_path('app/bfc-client/identity') is used. When neither exists,
+    | a UUID is generated, persisted to that file, and reused thereafter.
+    |
+    | Installs on EPHEMERAL filesystems should set BFC_CLIENT_IDENTITY
+    | explicitly, or the generated identity will churn on every redeploy.
     |
     */
 

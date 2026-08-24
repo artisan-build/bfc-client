@@ -11,6 +11,8 @@ final class BfcClientServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->mergeConfigFrom(__DIR__.'/../config/bfc-client.php', 'bfc-client');
+
+        $this->app->singleton(ClientIdentity::class);
     }
 
     public function boot(): void
