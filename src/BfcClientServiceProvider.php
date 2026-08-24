@@ -28,13 +28,20 @@ final class BfcClientServiceProvider extends ServiceProvider
             /** @var Factory $this */
             $identity = app(ClientIdentity::class)->resolve();
 
-            if (strlen($identity) > 255 || strpbrk($identity, "\r\n") !== false) {
+            if (
+                ! mb_check_encoding($identity, 'UTF-8')
+                || strlen($identity) > 255
+                || strpbrk($identity, "\r\n") !== false
+            ) {
                 throw new InvalidArgumentException(
-                    'The resolved client identity must be at most 255 bytes and contain no line breaks.'
+                    'The resolved client identity must be valid UTF-8, at most 255 bytes, and contain no CR or LF octets.'
                 );
             }
 
-            return $this->withHeaders([BfcHeaders::CLIENT_ID => $identity]);
+            // replaceHeaders, not withHeaders: the validated identity must be
+            // the ONLY value on the wire, even when a conflicting header was
+            // pre-set via Http::globalOptions().
+            return $this->replaceHeaders([BfcHeaders::CLIENT_ID => $identity]);
         });
     }
 }

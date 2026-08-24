@@ -21,10 +21,11 @@ return [
     | Installs on EPHEMERAL filesystems should set BFC_CLIENT_IDENTITY
     | explicitly, or the generated identity will churn on every redeploy.
     |
-    | The wire contract caps the identity at 255 bytes with no line breaks.
-    | Http::withClientIdentity() never truncates or mutates the value — an
-    | identity that violates the cap throws an InvalidArgumentException at
-    | the attach point instead of being sent.
+    | The wire contract requires the identity to be valid UTF-8, 1-255
+    | bytes, containing no CR (\r) or LF (\n) octets. Http::withClientIdentity()
+    | never truncates or mutates the value — an identity that violates the
+    | contract throws an InvalidArgumentException at the attach point
+    | instead of being sent.
     |
     */
 
