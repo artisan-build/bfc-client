@@ -31,4 +31,24 @@ return [
 
     'identity' => env('BFC_CLIENT_IDENTITY'),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Proof of Life
+    |--------------------------------------------------------------------------
+    |
+    | A read-only route a BfC provider hits to confirm this package is
+    | installed and to read the client identity. The response contains the
+    | package name and the resolved identity — an identifier, never a
+    | secret — and nothing else.
+    |
+    | Disable the route entirely with BFC_CLIENT_PROOF_OF_LIFE=false, or
+    | move it with BFC_CLIENT_PROOF_OF_LIFE_PATH.
+    |
+    */
+
+    'proof_of_life' => [
+        'enabled' => env('BFC_CLIENT_PROOF_OF_LIFE', true),
+        'path' => env('BFC_CLIENT_PROOF_OF_LIFE_PATH', 'bfc-client'),
+    ],
+
 ];
