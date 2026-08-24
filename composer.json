@@ -1,0 +1,51 @@
+{
+    "name": "artisan-build/bfc-client",
+    "description": "Client-side Built for Cloud package: stable client identity and proof-of-life for BfC client applications.",
+    "keywords": ["laravel", "laravel-cloud", "built-for-cloud", "artisan-build"],
+    "license": "MIT",
+    "type": "library",
+    "require": {
+        "php": "^8.3",
+        "illuminate/contracts": "^13.0",
+        "illuminate/http": "^13.0",
+        "illuminate/routing": "^13.0",
+        "illuminate/support": "^13.0"
+    },
+    "require-dev": {
+        "larastan/larastan": "^3.9",
+        "laravel/pint": "^1.27",
+        "orchestra/testbench": "^11.0",
+        "pestphp/pest": "^4.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "ArtisanBuild\\BfcClient\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "ArtisanBuild\\BfcClient\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "pest",
+        "lint": "pint",
+        "lint:test": "pint --test",
+        "stan": "phpstan analyse --memory-limit=512M"
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "ArtisanBuild\\BfcClient\\BfcClientServiceProvider"
+            ]
+        }
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

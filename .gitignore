@@ -1,0 +1,5 @@
+/.solo/
+/vendor/
+/.phpunit.cache/
+composer.lock
+decisions.tsv
