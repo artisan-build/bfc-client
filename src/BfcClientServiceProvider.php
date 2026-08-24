@@ -5,9 +5,12 @@ declare(strict_types=1);
 namespace ArtisanBuild\BfcClient;
 
 use ArtisanBuild\BfcClient\Http\Controllers\ProofOfLifeController;
+use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Client\Factory;
 use Illuminate\Http\Client\PendingRequest;
+use Illuminate\Http\Request;
 use Illuminate\Routing\Router;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use InvalidArgumentException;
 
@@ -54,6 +57,11 @@ final class BfcClientServiceProvider extends ServiceProvider
      * returns is an identifier, never a secret, and providers poll it
      * without credentials. It is throttled and can be disabled or moved
      * via config.
+     *
+     * The limiter is named and keyed on the IP rather than inline
+     * (`throttle:60,1`): the inline form builds its signature via
+     * `$request->user()`, which throws on a headless app with no auth
+     * guard at all, 500ing every request to the route.
      */
     private function registerProofOfLifeRoute(): void
     {
@@ -61,11 +69,13 @@ final class BfcClientServiceProvider extends ServiceProvider
             return;
         }
 
+        RateLimiter::for('bfc-client', fn (Request $request): Limit => Limit::perMinute(60)->by($request->ip() ?? 'unknown'));
+
         /** @var Router $router */
         $router = $this->app->make('router');
 
         $router->get((string) config('bfc-client.proof_of_life.path'), ProofOfLifeController::class)
             ->name('bfc-client.proof-of-life')
-            ->middleware('throttle:60,1');
+            ->middleware('throttle:bfc-client');
     }
 }
