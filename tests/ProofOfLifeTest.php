@@ -30,6 +30,18 @@ it('fails loudly instead of serving a contract-violating identity', function () 
     expect($response->getContent())->not->toContain("bad\nidentity");
 });
 
+it('fails loudly instead of serving an identity containing a NUL byte', function () {
+    config()->set('bfc-client.identity', "client\0one");
+
+    $response = $this->getJson('/bfc-client');
+
+    $response->assertStatus(500);
+
+    // The truncated prefix must not be served either: that is precisely the
+    // value a PostgreSQL-backed provider would have stored.
+    expect($response->json('client_id'))->toBeNull();
+});
+
 it('never leaks the application key in the response', function () {
     config()->set('app.key', 'base64:'.base64_encode('bfc-proof-of-life-canary-secret!'));
     config()->set('bfc-client.identity', 'proof-of-life-identity-pr4');
