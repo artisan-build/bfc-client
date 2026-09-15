@@ -34,7 +34,9 @@ function b1Run(array $command, string $directory, array $environment, string $la
     return $process->getOutput();
 }
 
-/** @return array<string, string> */
+/** @param array<string, string> $overrides
+ * @return array<string, string>
+ */
 function b1Environment(array $overrides = []): array
 {
     $environment = getenv();
@@ -170,6 +172,7 @@ function b1LockedPackage(string $lockPath, string $package): array
     b1Fail('The required package was absent from the installed lock.');
 }
 
+/** @param array<string, mixed> $overrides */
 function b1Assertion(AsymmetricSecretKey $key, string $audience, array $overrides = []): string
 {
     $now = new DateTimeImmutable;
@@ -246,16 +249,18 @@ try {
         'docker', 'run', '--rm', '--detach', '--name', $container,
         '--env', 'POSTGRES_HOST_AUTH_METHOD=trust', '--publish', '127.0.0.1::5432', 'postgres:17-alpine',
     ], $root, [], 'PostgreSQL container start');
-    BoundedWait::until(function () use ($container, $root): bool {
-        $process = new Process(['docker', 'exec', $container, 'pg_isready', '-U', 'postgres'], $root);
-
-        return $process->run() === 0;
-    }, 30, 'The disposable PostgreSQL container did not become ready.');
     $portOutput = trim(b1Run(['docker', 'port', $container, '5432/tcp'], $root, [], 'PostgreSQL port discovery'));
     if (preg_match('/127\.0\.0\.1:([0-9]+)$/', $portOutput, $portMatch) !== 1) {
         b1Fail('The disposable PostgreSQL port was invalid.');
     }
     $administrator = new PostgresAdministrator('127.0.0.1', (int) $portMatch[1], 'postgres', 'postgres', '', 'disable');
+    BoundedWait::until(static function () use ($administrator): bool {
+        try {
+            return $administrator->connect()->query('SELECT 1') !== false;
+        } catch (Throwable) {
+            return false;
+        }
+    }, 30, 'The disposable PostgreSQL host service did not become ready.');
     $lane = DisposablePostgresLane::create($administrator, $manifestDirectory);
     $databaseName = $lane->databaseName();
 
