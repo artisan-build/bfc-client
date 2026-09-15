@@ -52,7 +52,9 @@ final class B1P6ServiceProvider extends ServiceProvider
 
             Route::post('/_b1/retry', static function (Request $request) {
                 $key = (string) $request->header('Idempotency-Key');
-                $attempt = Cache::increment('b1-retry:'.hash('sha256', $key));
+                $counter = 'b1-retry:'.hash('sha256', $key);
+                Cache::add($counter, 0, 60);
+                $attempt = Cache::increment($counter);
                 $payload = [
                     'attempt' => $attempt,
                     'client_id' => $request->header('X-BfC-Client-Id'),
