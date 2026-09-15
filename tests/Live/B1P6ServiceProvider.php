@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Providers;
 
+use ArtisanBuild\BuiltForCloud\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -14,6 +15,9 @@ final class B1P6ServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
+        $this->app['config']->set('auth.defaults.guard', 'web');
+        $this->app['config']->set('auth.guards.web', ['driver' => 'session', 'provider' => 'users']);
+        $this->app['config']->set('auth.providers.users', ['driver' => 'eloquent', 'model' => User::class]);
         $this->app['config']->set('cache.default', 'database');
         $this->app['config']->set('cache.stores.database', [
             'driver' => 'database',
