@@ -94,7 +94,7 @@ function b1RemoveTree(string $path): void
  */
 function b1Http(int $port, string $method, string $path, array $headers = [], string $body = ''): array
 {
-    $socket = stream_socket_client('tcp://127.0.0.1:'.$port, $errorNumber, $error, 5);
+    $socket = @stream_socket_client('tcp://127.0.0.1:'.$port, $errorNumber, $error, 5);
 
     if (! is_resource($socket)) {
         b1Fail('A loopback request could not connect.');
@@ -132,6 +132,15 @@ function b1Http(int $port, string $method, string $path, array $headers = [], st
     }
 
     return ['status' => (int) $matches[1], 'headers' => $responseHeaders, 'body' => $responseBody];
+}
+
+function b1Ready(int $port, string $path): bool
+{
+    try {
+        return b1Http($port, 'GET', $path)['status'] === 200;
+    } catch (Throwable) {
+        return false;
+    }
 }
 
 /** @param array{status: int, headers: array<string, list<string>>, body: string} $response */
@@ -347,18 +356,11 @@ try {
     }
     $cases['local_install_idempotence_and_secrecy'] = 'pass';
 
-    $readyProof = static function (int $port): bool {
-        try {
-            return b1Http($port, 'GET', '/bfc-client')['status'] === 200;
-        } catch (Throwable) {
-            return false;
-        }
-    };
     $sourceListener = P6LoopbackProcess::start(
         [PHP_BINARY, '-S', '127.0.0.1:{port}', '-t', 'public', 'public/index.php'],
         $sourceHost,
         $sourceEnvironment,
-        $readyProof,
+        static fn (int $port): bool => b1Ready($port, '/bfc-client'),
     );
     $proof = b1Http($sourceListener->port, 'GET', '/bfc-client');
     b1Status($proof, 200, 'source proof');
@@ -379,7 +381,7 @@ try {
         [PHP_BINARY, '-S', '127.0.0.1:{port}', '-t', 'public', 'public/index.php'],
         $sourceHost,
         $customEnvironment,
-        static fn (int $port): bool => b1Http($port, 'GET', '/custom-proof')['status'] === 200,
+        static fn (int $port): bool => b1Ready($port, '/custom-proof'),
     );
     b1Status(b1Http($sourceListener->port, 'GET', '/bfc-client'), 404, 'moved proof default path');
     $sourceListener->stop();
@@ -389,7 +391,7 @@ try {
         [PHP_BINARY, '-S', '127.0.0.1:{port}', '-t', 'public', 'public/index.php'],
         $sourceHost,
         $disabledEnvironment,
-        static fn (int $port): bool => b1Http($port, 'GET', '/up')['status'] === 200,
+        static fn (int $port): bool => b1Ready($port, '/up'),
     );
     b1Status(b1Http($sourceListener->port, 'GET', '/bfc-client'), 404, 'disabled proof');
     $sourceListener->stop();
@@ -400,7 +402,7 @@ try {
         [PHP_BINARY, '-S', '127.0.0.1:{port}', '-t', 'public', 'public/index.php'],
         $sourceHost,
         $invalidEnvironment,
-        static fn (int $port): bool => b1Http($port, 'GET', '/up')['status'] === 200,
+        static fn (int $port): bool => b1Ready($port, '/up'),
     );
     $invalidProof = b1Http($sourceListener->port, 'GET', '/bfc-client');
     b1Status($invalidProof, 500, 'invalid proof identity');
@@ -471,7 +473,7 @@ try {
         [PHP_BINARY, '-S', '127.0.0.1:{port}', '-t', 'public', 'public/index.php'],
         $providerHost,
         $providerEnvironment,
-        static fn (int $port): bool => b1Http($port, 'GET', '/_b1/runtime')['status'] === 200,
+        static fn (int $port): bool => b1Ready($port, '/_b1/runtime'),
     );
     $runtime = b1Json(b1Http($providerListener->port, 'GET', '/_b1/runtime')['body'], 'provider runtime');
     b1Same($databaseName, $runtime['database'] ?? null, 'provider database');
