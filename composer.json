@@ -39,9 +39,6 @@
     },
     "extra": {
         "laravel": {
-            "dont-discover": [
-                "artisan-build/built-for-cloud"
-            ],
             "providers": [
                 "ArtisanBuild\\BfcClient\\BfcClientServiceProvider"
             ]

@@ -8,6 +8,8 @@ use ArtisanBuild\BfcClient\Install\InstallFiles;
 use ArtisanBuild\BuiltForCloud\BuiltForCloudServiceProvider;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Database\Migrations\Migrator;
+use Illuminate\Filesystem\Filesystem;
+use Illuminate\Foundation\PackageManifest;
 use Illuminate\Http\Client\Factory;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\RateLimiter;
@@ -46,8 +48,39 @@ it('boots only the declared client package surface', function (): void {
         ->and($views->getHints())->not->toHaveKeys(['bfc', 'bfc-client'])
         ->and($composer['require'])->not->toHaveKey('artisan-build/built-for-cloud')
         ->and($composer['require-dev']['artisan-build/built-for-cloud'])->toBe('^0.12.2')
-        ->and($composer['extra']['laravel']['dont-discover'])->toBe(['artisan-build/built-for-cloud'])
+        ->and($composer['extra']['laravel'])->not->toHaveKey('dont-discover')
         ->and($this->app->getProviders(BuiltForCloudServiceProvider::class))->toBe([]);
+});
+
+it('does not suppress a co-installed package from Laravel discovery', function (): void {
+    $files = new Filesystem;
+    $base = storage_path('framework/testing/bfc-client-manifest-'.bin2hex(random_bytes(8)));
+    $vendor = $base.'/vendor';
+    $manifestPath = $base.'/bootstrap/cache/packages.php';
+
+    try {
+        $files->ensureDirectoryExists($vendor.'/composer');
+        $files->ensureDirectoryExists(dirname($manifestPath));
+
+        $clientMetadata = json_decode($files->get(dirname(__DIR__).'/composer.json'), true, flags: JSON_THROW_ON_ERROR);
+        $serverMetadata = json_decode($files->get(dirname(__DIR__).'/vendor/artisan-build/built-for-cloud/composer.json'), true, flags: JSON_THROW_ON_ERROR);
+
+        $files->put($base.'/composer.json', json_encode($clientMetadata, JSON_THROW_ON_ERROR));
+        $files->put($vendor.'/composer/installed.json', json_encode([
+            'packages' => [$clientMetadata, $serverMetadata],
+        ], JSON_THROW_ON_ERROR));
+
+        $manifest = new PackageManifest($files, $base, $manifestPath);
+        $manifest->vendorPath = $vendor;
+        $manifest->build();
+
+        expect($manifest->providers())->toBe([
+            BfcClientServiceProvider::class,
+            BuiltForCloudServiceProvider::class,
+        ]);
+    } finally {
+        $files->deleteDirectory($base);
+    }
 });
 
 it('uses the install helper without a console command or application container', function (): void {
