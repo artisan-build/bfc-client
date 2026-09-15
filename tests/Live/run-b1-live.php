@@ -83,17 +83,8 @@ function b1RouteInventory(string $contents, string $label): array
         ];
     }
 
-    usort($inventory, static fn (array $left, array $right): int => [
-        $left['uri'],
-        $left['methods'],
-        $left['name'],
-        $left['middleware'],
-    ] <=> [
-        $right['uri'],
-        $right['methods'],
-        $right['name'],
-        $right['middleware'],
-    ]);
+    usort($inventory, static fn (array $left, array $right): int => json_encode($left, JSON_THROW_ON_ERROR)
+        <=> json_encode($right, JSON_THROW_ON_ERROR));
 
     return $inventory;
 }
@@ -427,27 +418,18 @@ try {
         'name' => 'bfc-client.proof-of-life',
         'middleware' => ['throttle:bfc-client'],
     ];
-    usort($expectedRouteInventory, static fn (array $left, array $right): int => [
-        $left['uri'],
-        $left['methods'],
-        $left['name'],
-        $left['middleware'],
-    ] <=> [
-        $right['uri'],
-        $right['methods'],
-        $right['name'],
-        $right['middleware'],
-    ]);
+    usort($expectedRouteInventory, static fn (array $left, array $right): int => json_encode($left, JSON_THROW_ON_ERROR)
+        <=> json_encode($right, JSON_THROW_ON_ERROR));
     b1SameRouteInventory(
         $expectedRouteInventory,
         $candidateRouteInventory,
         'source complete route inventory (fresh Laravel baseline plus one BfC proof route)',
     );
-    b1Same(
-        array_map(static fn (array $route): array => [$route['methods'], $route['uri']], $candidateRouteInventory),
-        $inventory['route_inventory'] ?? null,
-        'source emitted route inventory',
-    );
+    $emittedRouteInventory = $inventory['route_inventory'] ?? null;
+    if (! is_array($emittedRouteInventory) || ! array_is_list($emittedRouteInventory)) {
+        b1Fail('source emitted route inventory did not contain a route list.');
+    }
+    b1SameRouteInventory($candidateRouteInventory, $emittedRouteInventory, 'source emitted complete route inventory');
     b1Same(['ArtisanBuild\\BfcClient\\BfcClientServiceProvider'], $inventory['providers'] ?? null, 'source providers');
     b1Same([
         'App\\Providers\\AppServiceProvider',

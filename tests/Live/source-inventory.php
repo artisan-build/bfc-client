@@ -70,10 +70,16 @@ $routes = collect(Route::getRoutes()->getRoutes())
     ->values()
     ->all();
 $routeInventory = collect(Route::getRoutes()->getRoutes())
-    ->map(static fn ($route): array => [$route->methods(), $route->uri()])
-    ->sortBy(static fn (array $route): string => $route[1])
+    ->map(static fn ($route): array => [
+        'methods' => $route->methods(),
+        'uri' => $route->uri(),
+        'name' => $route->getName(),
+        'middleware' => $route->middleware(),
+    ])
     ->values()
     ->all();
+usort($routeInventory, static fn (array $left, array $right): int => json_encode($left, JSON_THROW_ON_ERROR)
+    <=> json_encode($right, JSON_THROW_ON_ERROR));
 $commands = [];
 foreach (Artisan::all() as $name => $command) {
     if (str_starts_with($name, 'bfc') || str_starts_with($command::class, 'ArtisanBuild\\')) {
