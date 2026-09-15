@@ -540,6 +540,16 @@ try {
     b1Status(b1Http($providerListener->port, 'POST', '/_b1/probe', $majorHeaders(b1Assertion($key, 'urn:bfc:installation:wrong'))), 401, 'wrong installation');
     $cases['audience_installation_and_replay'] = 'pass';
 
+    $retry = $sourceRequest($providerBase.'/_b1/retry', $seed['valid_secret'], true);
+    b1Same(200, $retry['status'] ?? null, 'consumer-owned retry');
+    b1Same([
+        'attempt' => 2,
+        'client_id' => 'b1-live-source',
+        'contract_major' => '2',
+        'idempotency_key' => $idempotency,
+    ], $retry['body'] ?? null, 'retry metadata');
+    $cases['caller_owned_retry'] = 'pass';
+
     $rotation = b1Http($providerListener->port, 'POST', '/bfc/credentials/'.$seed['valid_id'].'/rotate', [
         ['Authorization', 'Bearer '.$seed['operator_secret']],
     ], '{"emergency":true}');
@@ -557,16 +567,6 @@ try {
     ]), 204, 'replacement revocation');
     b1Status(b1Http($providerListener->port, 'POST', '/_b1/probe', $majorHeaders($replacementSecret)), 401, 'revoked replacement');
     $cases['rotation_and_revocation'] = 'pass';
-
-    $retry = $sourceRequest($providerBase.'/_b1/retry', $seed['valid_secret'], true);
-    b1Same(200, $retry['status'] ?? null, 'consumer-owned retry');
-    b1Same([
-        'attempt' => 2,
-        'client_id' => 'b1-live-source',
-        'contract_major' => '2',
-        'idempotency_key' => $idempotency,
-    ], $retry['body'] ?? null, 'retry metadata');
-    $cases['caller_owned_retry'] = 'pass';
 } catch (Throwable $exception) {
     $failure = $exception;
 } finally {
@@ -612,8 +612,8 @@ $expectedCases = [
     'version_vocabulary',
     'spoofed_client_refused',
     'audience_installation_and_replay',
-    'rotation_and_revocation',
     'caller_owned_retry',
+    'rotation_and_revocation',
 ];
 b1Same($expectedCases, array_keys($cases), 'live case inventory');
 b1Same(array_fill_keys($expectedCases, 'pass'), $cases, 'live cases');
