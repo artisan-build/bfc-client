@@ -58,6 +58,23 @@ JSON;
         ));
 });
 
+it('preserves every existing env byte and terminal newline state when appending a missing key', function (string $before, string $expected): void {
+    $env = $this->installRoot.'/.env.install';
+    file_put_contents($env, $before);
+    chmod($env, 0640);
+
+    expect((new InstallFiles)->writeEnvironment($env, ['ADDED_KEY' => 'created-value']))
+        ->toBe(InstallTargetState::Replaced)
+        ->and(file_get_contents($env))->toBe($expected)
+        ->and(fileperms($env) & 0777)->toBe(0640);
+})->with([
+    'LF trailing blank lines' => ["A=1\n\n\n", "A=1\n\n\nADDED_KEY=created-value\n"],
+    'CRLF trailing blank lines' => ["A=1\r\n\r\n\r\n", "A=1\r\n\r\n\r\nADDED_KEY=created-value\r\n"],
+    'mixed trailing blank lines' => ["A=1\nB=2\r\n\r\n", "A=1\nB=2\r\n\r\nADDED_KEY=created-value\r\n"],
+    'LF unterminated final line' => ["A=1\nB=2", "A=1\nB=2\nADDED_KEY=created-value"],
+    'mixed unterminated final line' => ["A=1\nB=2\r\nC=3", "A=1\nB=2\r\nC=3\r\nADDED_KEY=created-value"],
+]);
+
 it('adds a missing Composer requirement without rewriting existing bytes', function (): void {
     $composer = $this->installRoot.'/composer.json';
     $before = "{\n    \"name\": \"fixture/app\",\n    \"require\": {\n        \"php\": \"^8.3\"\n    },\n    \"extra\": {\"marker\": \"byte-exact\"}\n}\n";

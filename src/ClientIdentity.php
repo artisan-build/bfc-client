@@ -33,18 +33,9 @@ final class ClientIdentity
     }
 
     /**
-     * Resolve the identity and enforce the wire contract: valid UTF-8, at
-     * most 255 bytes, no CR, LF, or NUL octets. Every surface that puts the
-     * identity on the wire (the X-BfC-Client-Id header, the proof-of-life
-     * route) uses this single code path, so a misconfigured identity fails
-     * loudly instead of being sent or served.
-     *
-     * NUL is rejected separately from CR/LF because it is not a header
-     * injection hazard but a collision one: a NUL is valid UTF-8, so it
-     * clears the encoding check, yet PostgreSQL silently truncates a stored
-     * value at the first NUL. Two byte-distinct identities would collapse
-     * into one on a provider using that driver, so servers reject it and the
-     * client fails fast rather than sending a value that is dropped later.
+     * Resolve the identity and enforce the byte-stable HTTP field contract.
+     * Every wire surface uses this path, so transport normalization cannot
+     * make the request metadata differ from the proof response.
      *
      * @throws InvalidArgumentException
      */
@@ -55,11 +46,12 @@ final class ClientIdentity
         if (
             ! mb_check_encoding($identity, 'UTF-8')
             || strlen($identity) > 255
-            || strpbrk($identity, "\r\n") !== false
-            || str_contains($identity, "\0")
+            || preg_match('/[\x00-\x1F\x7F]/', $identity) === 1
+            || str_starts_with($identity, ' ')
+            || str_ends_with($identity, ' ')
         ) {
             throw new InvalidArgumentException(
-                'The resolved client identity must be valid UTF-8, at most 255 bytes, and contain no CR, LF, or NUL octets.'
+                'The resolved client identity must be a valid, byte-stable HTTP field value of at most 255 UTF-8 bytes.'
             );
         }
 

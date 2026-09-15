@@ -245,6 +245,8 @@ $candidateChecksum = '';
 $p6Version = '';
 $p6Reference = '';
 $cases = [];
+$thinSourceInventoryPassed = false;
+$realProofRoutePassed = false;
 $teardown = ['listeners_absent' => false, 'database_absent' => false, 'container_absent' => false, 'files_absent' => false];
 
 try {
@@ -303,6 +305,16 @@ try {
         ], $runDirectory, [], 'fresh Laravel host creation');
     }
 
+    foreach ([$sourceHost.'/app/Models/User.php', $sourceHost.'/database/factories/UserFactory.php'] as $authFile) {
+        if (! is_file($authFile) || ! unlink($authFile)) {
+            b1Fail('The fresh source host auth-file baseline could not be removed.');
+        }
+    }
+    $authMigrations = glob($sourceHost.'/database/migrations/*_create_users_table.php') ?: [];
+    if (count($authMigrations) !== 1 || ! unlink($authMigrations[0])) {
+        b1Fail('The fresh source host auth-schema baseline could not be removed.');
+    }
+
     $sourceComposer = b1Json((string) file_get_contents($sourceHost.'/composer.json'), 'source composer');
     $candidate = b1Json((string) file_get_contents($sourcePackage.'/composer.json'), 'candidate composer');
     $candidate['version'] = '0.0.0+b1.'.$candidateSha;
@@ -330,12 +342,39 @@ try {
     ]);
     $inventory = b1Json(b1Run([PHP_BINARY, 'source-inventory.php'], $sourceHost, $sourceEnvironment, 'source inventory'), 'source inventory');
     b1Same(['ArtisanBuild\\BfcClient\\BfcClientServiceProvider'], $inventory['providers'] ?? null, 'source providers');
+    b1Same([
+        'App\\Providers\\AppServiceProvider',
+        'ArtisanBuild\\BfcClient\\BfcClientServiceProvider',
+    ], $inventory['application_providers'] ?? null, 'source application providers');
+    b1Same(['AppServiceProvider.php'], $inventory['provider_files'] ?? null, 'source provider files');
     b1Same(false, $inventory['server_package_installed'] ?? null, 'source server dependency absence');
+    b1Same(['artisan-build/bfc-client'], $inventory['artisan_dependencies'] ?? null, 'source Artisan Build dependencies');
     b1Same([], $inventory['commands'] ?? null, 'source commands');
+    b1Same([], $inventory['command_files'] ?? null, 'source command files');
     b1Same([], $inventory['migration_paths'] ?? null, 'source migrations');
+    b1Same([
+        '0001_01_01_000001_create_cache_table.php',
+        '0001_01_01_000002_create_jobs_table.php',
+    ], $inventory['migration_files'] ?? null, 'source migration files');
+    b1Same([], $inventory['model_files'] ?? null, 'source model files');
+    b1Same([], $inventory['factory_files'] ?? null, 'source factory files');
+    b1Same(['Controller.php'], $inventory['controller_files'] ?? null, 'source controller files');
+    b1Same(['welcome.blade.php'], $inventory['view_files'] ?? null, 'source view files');
+    b1Same([], $inventory['package_view_hints'] ?? null, 'source package view hints');
+    b1Same([], $inventory['event_files'] ?? null, 'source event files');
+    b1Same([], $inventory['listener_files'] ?? null, 'source listener files');
+    b1Same([], $inventory['registered_listeners'] ?? null, 'source registered listeners');
+    b1Same([], $inventory['scheduled_tasks'] ?? null, 'source scheduled tasks');
+    b1Same([
+        [['GET', 'HEAD'], '/'],
+        [['GET', 'HEAD'], 'bfc-client'],
+        [['GET', 'HEAD'], 'up'],
+    ], $inventory['route_inventory'] ?? null, 'source route inventory');
+    b1Same([[['GET', 'HEAD'], 'bfc-client', 'bfc-client.proof-of-life', ['throttle:bfc-client']]], $inventory['routes'] ?? null, 'source BfC routes');
+    b1Same(['web'], $inventory['guards'] ?? null, 'source guards');
     b1Same(true, $inventory['identity_bound'] ?? null, 'source identity binding');
     b1Same(true, $inventory['macro_registered'] ?? null, 'source HTTP macro');
-    $cases['thin_source_host'] = 'pass';
+    $thinSourceInventoryPassed = true;
 
     $installSecret = 'b1_fixture_'.bin2hex(random_bytes(24));
     $installInput = json_encode(['credential' => $installSecret], JSON_THROW_ON_ERROR);
@@ -412,6 +451,7 @@ try {
     }
     $sourceListener->stop();
     $sourceListener = null;
+    $realProofRoutePassed = true;
     $cases['real_proof_route'] = 'pass';
 
     $providerComposer = b1Json((string) file_get_contents($providerHost.'/composer.json'), 'provider composer');
@@ -507,6 +547,10 @@ try {
         'contract_major' => '2',
         'idempotency_key' => $idempotency,
     ], $valid['body'] ?? null, 'valid fixed-purpose response');
+    if (! $thinSourceInventoryPassed || ! $realProofRoutePassed) {
+        b1Fail('The thin source host runtime proof was incomplete.');
+    }
+    $cases['thin_source_host'] = 'pass';
     b1Same(401, $sourceRequest($providerBase.'/_b1/probe', $seed['wrong_secret'])['status'] ?? null, 'wrong purpose');
     b1Same(401, $sourceRequest($providerBase.'/_b1/probe', $seed['revoked_secret'])['status'] ?? null, 'revoked credential');
     $cases['fixed_purpose_and_revocation'] = 'pass';
@@ -604,10 +648,10 @@ if ($failure instanceof Throwable) {
 }
 
 $expectedCases = [
-    'thin_source_host',
     'local_install_idempotence_and_secrecy',
     'real_proof_route',
     'published_p6_postgres_shared_state',
+    'thin_source_host',
     'fixed_purpose_and_revocation',
     'version_vocabulary',
     'spoofed_client_refused',

@@ -105,9 +105,14 @@ final class InstallFiles
         }
 
         $newline = str_contains($contents, "\r\n") ? "\r\n" : "\n";
-        $contents = rtrim($contents, "\r\n");
 
-        return ($contents === '' ? '' : $contents.$newline).$line.$newline;
+        if ($contents === '') {
+            return $line.$newline;
+        }
+
+        return str_ends_with($contents, "\n")
+            ? $contents.$line.$newline
+            : $contents.$newline.$line;
     }
 
     private function validatePath(string $path, bool $mustExist): void

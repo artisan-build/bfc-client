@@ -9,6 +9,20 @@ use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 
+$invalidIdentityCases = [
+    'invalid UTF-8' => "client-\xC3\x28-marker",
+    'over 255 bytes' => str_repeat('oversized-marker-', 18),
+    'leading SP' => ' leading-marker',
+    'trailing SP' => 'trailing-marker ',
+    'leading HTAB' => "\tleading-marker",
+    'trailing HTAB' => "trailing-marker\t",
+    'DEL' => "client-\x7F-marker",
+];
+
+foreach (range(0x00, 0x1F) as $control) {
+    $invalidIdentityCases[sprintf('C0 0x%02x', $control)] = 'client-'.chr($control).'-marker';
+}
+
 it('attaches exactly one client identity and canonical contract major', function () {
     config()->set('bfc-client.identity', 'client-abc-123');
 
@@ -71,12 +85,19 @@ it('rejects invalid identity bytes before send without reflecting them', functio
     }
 
     Http::assertNothingSent();
+})->with($invalidIdentityCases);
+
+it('sends accepted identity values byte-exactly', function (string $identity) {
+    config()->set('bfc-client.identity', $identity);
+    Http::fake();
+
+    Http::withClientIdentity()->get('https://provider.test/api/ping');
+
+    Http::assertSent(fn (Request $request): bool => $request->header(BfcHeaders::CLIENT_ID) === [$identity]);
 })->with([
-    'invalid UTF-8' => "client-\xC3\x28-marker",
-    'over 255 bytes' => str_repeat('oversized-marker-', 18),
-    'carriage return' => "client-\r-marker",
-    'line feed' => "client-\n-marker",
-    'NUL' => "client-\0-marker",
+    'interior spaces' => 'client identity value',
+    'multibyte UTF-8' => 'client-é-identity',
+    '255-byte boundary' => str_repeat('a', 255),
 ]);
 
 it('rejects an identity longer than 255 bytes', function () {
