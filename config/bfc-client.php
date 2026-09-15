@@ -21,12 +21,11 @@ return [
     | Installs on EPHEMERAL filesystems should set BFC_CLIENT_IDENTITY
     | explicitly, or the generated identity will churn on every redeploy.
     |
-    | The wire contract requires the identity to be valid UTF-8, 1-255
-    | bytes, containing no CR (\r), LF (\n), or NUL octets. Persisted and
-    | explicit labels are byte-exact. Http::withClientIdentity() never
-    | truncates or mutates the value; an identity that violates the
-    | contract throws an InvalidArgumentException at the attach point
-    | instead of being sent.
+    | The wire contract requires valid UTF-8 of 1-255 bytes, with no leading
+    | or trailing SP or HTAB, C0 control octet (including interior HTAB), or
+    | DEL. Persisted and explicit labels are byte-exact. Accepted values are
+    | not normalized; an identity that violates the contract throws an
+    | InvalidArgumentException at the attach point instead of being sent.
     |
     */
 

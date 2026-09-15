@@ -38,7 +38,7 @@ Http::withClientIdentity()
 
 The macro adds no retry. Consumers remain responsible for fail-open versus fail-loud behavior, operation-specific retries, `Retry-After`, and idempotency keys. A caller-created credential and idempotency key remain ordinary pending-request options across caller-driven retries.
 
-Invalid client IDs fail before send with a redacted `InvalidArgumentException`. Valid values are opaque UTF-8 strings of 1-255 bytes with no CR, LF, or NUL octet. They are never truncated or normalized.
+Invalid client IDs fail before send with a redacted `InvalidArgumentException`. Valid values are opaque UTF-8 strings of 1-255 bytes with no leading or trailing SP or HTAB, C0 control octet (including interior HTAB), or DEL. Accepted values are never truncated or normalized.
 
 ## Proof Of Life
 

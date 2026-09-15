@@ -556,8 +556,8 @@ try {
     $p6 = b1LockedPackage($providerHost.'/composer.lock', 'artisan-build/built-for-cloud');
     $p6Version = (string) ($p6['version'] ?? '');
     $p6Reference = (string) ($p6['source']['reference'] ?? '');
-    if ($p6Version !== 'v0.12.2' || $p6Reference !== 'f64e03e148c82028d85d6e799a90a898fceb2a24') {
-        b1Fail('The provider did not install the authorized published P6 v0.12.2 tag.');
+    if ($p6Version !== 'v0.12.3' || $p6Reference !== 'a42659c511a5131094f8c6dd2e5091c1f563115b') {
+        b1Fail('The provider did not install the authorized published P6 v0.12.3 tag.');
     }
 
     $audience = 'urn:bfc:installation:'.$databaseName;
