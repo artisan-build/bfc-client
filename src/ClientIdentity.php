@@ -9,6 +9,7 @@ use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 use RuntimeException;
+use Throwable;
 
 final class ClientIdentity
 {
@@ -32,18 +33,9 @@ final class ClientIdentity
     }
 
     /**
-     * Resolve the identity and enforce the wire contract: valid UTF-8, at
-     * most 255 bytes, no CR, LF, or NUL octets. Every surface that puts the
-     * identity on the wire (the X-BfC-Client-Id header, the proof-of-life
-     * route) uses this single code path, so a misconfigured identity fails
-     * loudly instead of being sent or served.
-     *
-     * NUL is rejected separately from CR/LF because it is not a header
-     * injection hazard but a collision one: a NUL is valid UTF-8, so it
-     * clears the encoding check, yet PostgreSQL silently truncates a stored
-     * value at the first NUL. Two byte-distinct identities would collapse
-     * into one on a provider using that driver, so servers reject it and the
-     * client fails fast rather than sending a value that is dropped later.
+     * Resolve the identity and enforce the byte-stable HTTP field contract.
+     * Every wire surface uses this path, so transport normalization cannot
+     * make the request metadata differ from the proof response.
      *
      * @throws InvalidArgumentException
      */
@@ -54,11 +46,12 @@ final class ClientIdentity
         if (
             ! mb_check_encoding($identity, 'UTF-8')
             || strlen($identity) > 255
-            || strpbrk($identity, "\r\n") !== false
-            || str_contains($identity, "\0")
+            || preg_match('/[\x00-\x1F\x7F]/', $identity) === 1
+            || str_starts_with($identity, ' ')
+            || str_ends_with($identity, ' ')
         ) {
             throw new InvalidArgumentException(
-                'The resolved client identity must be valid UTF-8, at most 255 bytes, and contain no CR, LF, or NUL octets.'
+                'The resolved client identity must be a valid, byte-stable HTTP field value of at most 255 UTF-8 bytes.'
             );
         }
 
@@ -73,37 +66,75 @@ final class ClientIdentity
             return $configured;
         }
 
-        $path = $this->storagePath();
-
-        if ($this->files->exists($path)) {
-            $persisted = trim($this->files->get($path));
-
-            if ($persisted !== '') {
-                return $persisted;
-            }
-        }
-
-        return $this->generate($path);
+        return $this->resolvePersisted($this->storagePath());
     }
 
     /**
-     * Generate a fresh identity and persist it at the given path.
-     *
-     * The write takes an exclusive lock and the persisted value is read back
-     * and returned, so concurrent first resolutions converge on whatever the
-     * file ultimately holds rather than each returning its own candidate.
+     * Generate a fresh identity while holding the identity file's lock. Using
+     * the target itself means every process observes one winner and no lock or
+     * temporary artifact remains after first resolution.
      */
-    private function generate(string $path): string
+    private function resolvePersisted(string $path): string
     {
-        $identity = Str::uuid7()->toString();
+        $failure = "Unable to persist the client identity to [{$path}].";
 
-        $this->files->ensureDirectoryExists(dirname($path), 0755);
+        try {
+            $directory = dirname($path);
 
-        if ($this->files->put($path, $identity, lock: true) === false) {
-            throw new RuntimeException("Unable to persist the client identity to [{$path}].");
+            if (! is_dir($directory)
+                && ! $this->files->makeDirectory($directory, 0755, true, true)
+                && ! is_dir($directory)) {
+                throw new RuntimeException($failure);
+            }
+
+            $file = @fopen($path, 'c+b');
+
+            if ($file === false) {
+                throw new RuntimeException($failure);
+            }
+
+            if (! flock($file, LOCK_EX)) {
+                fclose($file);
+
+                throw new RuntimeException($failure);
+            }
+
+            try {
+                if (fseek($file, 0) !== 0) {
+                    throw new RuntimeException($failure);
+                }
+
+                $persisted = stream_get_contents($file);
+
+                if (! is_string($persisted)) {
+                    throw new RuntimeException($failure);
+                }
+
+                if ($persisted !== '') {
+                    return $persisted;
+                }
+
+                $identity = (string) Str::uuid7();
+
+                if (ftruncate($file, 0) === false
+                    || rewind($file) === false
+                    || fwrite($file, $identity) !== strlen($identity)
+                    || fflush($file) === false) {
+                    throw new RuntimeException($failure);
+                }
+
+                return $identity;
+            } finally {
+                flock($file, LOCK_UN);
+                fclose($file);
+            }
+        } catch (Throwable $exception) {
+            if ($exception instanceof RuntimeException) {
+                throw $exception;
+            }
+
+            throw new RuntimeException($failure, previous: $exception);
         }
-
-        return trim($this->files->get($path));
     }
 
     private function storagePath(): string

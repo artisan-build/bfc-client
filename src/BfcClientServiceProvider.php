@@ -12,6 +12,7 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Router;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
+use Psr\Http\Message\RequestInterface;
 
 final class BfcClientServiceProvider extends ServiceProvider
 {
@@ -30,10 +31,13 @@ final class BfcClientServiceProvider extends ServiceProvider
 
         Factory::macro('withClientIdentity', function (): PendingRequest {
             /** @var Factory $this */
-            // replaceHeaders, not withHeaders: the validated identity must be
-            // the ONLY value on the wire, even when a conflicting header was
-            // pre-set via Http::globalOptions().
-            return $this->replaceHeaders([BfcHeaders::CLIENT_ID => app(ClientIdentity::class)->validated()]);
+            $identity = app(ClientIdentity::class)->validated();
+
+            return $this->withRequestMiddleware(static fn (RequestInterface $request): RequestInterface => $request
+                ->withoutHeader(BfcHeaders::CLIENT_ID)
+                ->withoutHeader(BfcHeaders::CONTRACT_VERSION)
+                ->withHeader(BfcHeaders::CLIENT_ID, $identity)
+                ->withHeader(BfcHeaders::CONTRACT_VERSION, (string) BfcContract::MAJOR));
         });
 
         $this->registerProofOfLifeRoute();

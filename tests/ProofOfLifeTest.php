@@ -13,8 +13,9 @@ it('responds at the default path with exactly the package name and client identi
     $response->assertOk();
     $response->assertHeader('Content-Type', 'application/json');
 
-    // Exact equality, not subset: the payload is these two keys and nothing else.
+    // Exact equality, not subset: the payload is these three keys and nothing else.
     expect($response->json())->toBe([
+        'contract_major' => 2,
         'package' => 'artisan-build/bfc-client',
         'client_id' => 'proof-of-life-identity-pr4',
     ]);
@@ -72,6 +73,7 @@ it('responds 200 for a guest request on an app with no auth guard at all', funct
     $this->getJson('/bfc-client')
         ->assertOk()
         ->assertExactJson([
+            'contract_major' => 2,
             'package' => 'artisan-build/bfc-client',
             'client_id' => 'guardless-identity',
         ]);

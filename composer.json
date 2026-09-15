@@ -14,6 +14,7 @@
         "illuminate/support": "^13.0"
     },
     "require-dev": {
+        "artisan-build/built-for-cloud": "^0.12.2",
         "larastan/larastan": "^3.9",
         "laravel/pint": "^1.27",
         "orchestra/testbench": "^11.0",
@@ -30,6 +31,7 @@
         }
     },
     "scripts": {
+        "test:b1-live": "@php tests/Live/run-b1-live.php",
         "test": "pest",
         "lint": "pint",
         "lint:test": "pint --test",

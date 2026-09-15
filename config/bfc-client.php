@@ -10,8 +10,8 @@ return [
     |--------------------------------------------------------------------------
     |
     | A stable identifier for this client installation, used by a BfC
-    | provider to attribute API traffic to a specific client app. This is
-    | an IDENTIFIER, never a secret — it grants nothing on its own.
+    | provider to label API traffic from a specific client app. This is an
+    | IDENTIFIER, never a secret or authority source; it grants nothing.
     |
     | Resolution order: when this value is a non-empty string it is used
     | verbatim (and never persisted). Otherwise the identity persisted at
@@ -21,11 +21,11 @@ return [
     | Installs on EPHEMERAL filesystems should set BFC_CLIENT_IDENTITY
     | explicitly, or the generated identity will churn on every redeploy.
     |
-    | The wire contract requires the identity to be valid UTF-8, 1-255
-    | bytes, containing no CR (\r) or LF (\n) octets. Http::withClientIdentity()
-    | never truncates or mutates the value — an identity that violates the
-    | contract throws an InvalidArgumentException at the attach point
-    | instead of being sent.
+    | The wire contract requires valid UTF-8 of 1-255 bytes, with no leading
+    | or trailing SP or HTAB, C0 control octet (including interior HTAB), or
+    | DEL. Persisted and explicit labels are byte-exact. Accepted values are
+    | not normalized; an identity that violates the contract throws an
+    | InvalidArgumentException at the attach point instead of being sent.
     |
     */
 
@@ -38,8 +38,8 @@ return [
     |
     | A read-only route a BfC provider hits to confirm this package is
     | installed and to read the client identity. The response contains the
-    | package name and the resolved identity — an identifier, never a
-    | secret — and nothing else.
+    | contract major, package name, and resolved identity. It returns no
+    | credential, authority, user, role, or application configuration.
     |
     | Disable the route entirely with BFC_CLIENT_PROOF_OF_LIFE=false, or
     | move it with BFC_CLIENT_PROOF_OF_LIFE_PATH.
