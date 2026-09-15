@@ -4,10 +4,14 @@ declare(strict_types=1);
 
 use ArtisanBuild\BfcClient\BfcContract;
 use ArtisanBuild\BfcClient\BfcHeaders;
+use GuzzleHttp\Handler\MockHandler;
+use GuzzleHttp\Middleware;
+use GuzzleHttp\Psr7\Response as GuzzleResponse;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
+use Psr\Http\Message\RequestInterface;
 
 $invalidIdentityCases = [
     'invalid UTF-8' => "client-\xC3\x28-marker",
@@ -57,20 +61,43 @@ it('resolves the identity lazily at call time, not at boot', function () {
     Http::assertSent(fn (Request $request): bool => $request->header(BfcHeaders::CLIENT_ID) === ['set-after-boot']);
 });
 
-it('replaces conflicting caller defaults with one canonical value each', function () {
+it('canonicalizes conflicting default and caller header variants on the wire', function () {
     config()->set('bfc-client.identity', 'client-abc-123');
 
     Http::globalOptions(['headers' => [
-        BfcHeaders::CLIENT_ID => ['spoofed-default', 'spoofed-second'],
-        BfcHeaders::CONTRACT_VERSION => ['1', '3'],
+        'x-bfc-client-id' => ['spoofed-default', 'spoofed-second'],
+        'bfc-contract-version' => ['1', '3'],
     ]]);
 
-    Http::fake();
+    $history = [];
+    $request = Http::withClientIdentity()
+        ->withHeaders([
+            'X-BFC-CLIENT-ID' => 'spoofed-caller',
+            'BfC-CoNtRaCt-VeRsIoN' => '4',
+        ])
+        ->withMiddleware(Middleware::history($history))
+        ->setHandler(new MockHandler([new GuzzleResponse]));
 
-    Http::withClientIdentity()->get('https://provider.test/api/ping');
+    $request->get('https://provider.test/api/ping');
 
-    Http::assertSent(fn (Request $request): bool => $request->header(BfcHeaders::CLIENT_ID) === ['client-abc-123']
-        && $request->header(BfcHeaders::CONTRACT_VERSION) === [(string) BfcContract::MAJOR]);
+    expect($history)->toHaveCount(1);
+
+    /** @var RequestInterface $wireRequest */
+    $wireRequest = $history[0]['request'];
+    $wireNames = array_keys($wireRequest->getHeaders());
+    $clientNames = array_values(array_filter(
+        $wireNames,
+        static fn (string $name): bool => strcasecmp($name, BfcHeaders::CLIENT_ID) === 0,
+    ));
+    $contractNames = array_values(array_filter(
+        $wireNames,
+        static fn (string $name): bool => strcasecmp($name, BfcHeaders::CONTRACT_VERSION) === 0,
+    ));
+
+    expect($clientNames)->toBe([BfcHeaders::CLIENT_ID])
+        ->and($wireRequest->getHeader(BfcHeaders::CLIENT_ID))->toBe(['client-abc-123'])
+        ->and($contractNames)->toBe([BfcHeaders::CONTRACT_VERSION])
+        ->and($wireRequest->getHeader(BfcHeaders::CONTRACT_VERSION))->toBe([(string) BfcContract::MAJOR]);
 });
 
 it('rejects invalid identity bytes before send without reflecting them', function (string $identity) {
