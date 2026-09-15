@@ -45,7 +45,7 @@ it('boots only the declared client package surface', function (): void {
         ->and($views)->toBeInstanceOf(FileViewFinder::class)
         ->and($views->getHints())->not->toHaveKeys(['bfc', 'bfc-client'])
         ->and($composer['require'])->not->toHaveKey('artisan-build/built-for-cloud')
-        ->and($composer['require-dev']['artisan-build/built-for-cloud'])->toBe('^0.12')
+        ->and($composer['require-dev']['artisan-build/built-for-cloud'])->toBe('^0.12.2')
         ->and($composer['extra']['laravel']['dont-discover'])->toBe(['artisan-build/built-for-cloud'])
         ->and($this->app->getProviders(BuiltForCloudServiceProvider::class))->toBe([]);
 });

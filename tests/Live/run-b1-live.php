@@ -455,7 +455,7 @@ try {
     $cases['real_proof_route'] = 'pass';
 
     $providerComposer = b1Json((string) file_get_contents($providerHost.'/composer.json'), 'provider composer');
-    $providerComposer['require']['artisan-build/built-for-cloud'] = '^0.12';
+    $providerComposer['require']['artisan-build/built-for-cloud'] = '^0.12.2';
     b1WriteComposer($providerHost.'/composer.json', $providerComposer);
     b1Run(['composer', 'update', '--no-interaction', '--prefer-dist', '--no-scripts'], $providerHost, [], 'published P6 install');
     foreach (glob($providerHost.'/database/migrations/*.php') ?: [] as $migration) {
@@ -472,8 +472,8 @@ try {
     $p6 = b1LockedPackage($providerHost.'/composer.lock', 'artisan-build/built-for-cloud');
     $p6Version = (string) ($p6['version'] ?? '');
     $p6Reference = (string) ($p6['source']['reference'] ?? '');
-    if (! in_array($p6Version, ['v0.12.0', 'v0.12.1'], true)) {
-        b1Fail('The provider did not install published P6 ^0.12.');
+    if ($p6Version !== 'v0.12.2' || $p6Reference !== 'f64e03e148c82028d85d6e799a90a898fceb2a24') {
+        b1Fail('The provider did not install the authorized published P6 v0.12.2 tag.');
     }
 
     $audience = 'urn:bfc:installation:'.$databaseName;
@@ -669,7 +669,7 @@ $stamp = [
     'candidate_archive_sha256' => $candidateChecksum,
     'packages' => [
         'bfc_client' => '0.0.0+b1.'.$candidateSha,
-        'built_for_cloud_constraint' => '^0.12',
+        'built_for_cloud_constraint' => '^0.12.2',
         'built_for_cloud_version' => $p6Version,
         'built_for_cloud_reference' => $p6Reference,
     ],
