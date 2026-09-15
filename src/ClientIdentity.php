@@ -76,47 +76,64 @@ final class ClientIdentity
      */
     private function resolvePersisted(string $path): string
     {
-        $this->files->ensureDirectoryExists(dirname($path), 0755);
-        $file = @fopen($path, 'c+b');
-
-        if ($file === false || ! flock($file, LOCK_EX)) {
-            throw new RuntimeException("Unable to persist the client identity to [{$path}].");
-        }
+        $failure = "Unable to persist the client identity to [{$path}].";
 
         try {
-            if (fseek($file, 0) !== 0) {
-                throw new RuntimeException("Unable to persist the client identity to [{$path}].");
+            $directory = dirname($path);
+
+            if (! is_dir($directory)
+                && ! $this->files->makeDirectory($directory, 0755, true, true)
+                && ! is_dir($directory)) {
+                throw new RuntimeException($failure);
             }
 
-            $persisted = stream_get_contents($file);
+            $file = @fopen($path, 'c+b');
 
-            if (! is_string($persisted)) {
-                throw new RuntimeException("Unable to persist the client identity to [{$path}].");
+            if ($file === false) {
+                throw new RuntimeException($failure);
             }
 
-            if ($persisted !== '') {
-                return $persisted;
+            if (! flock($file, LOCK_EX)) {
+                fclose($file);
+
+                throw new RuntimeException($failure);
             }
 
-            $identity = (string) Str::uuid7();
+            try {
+                if (fseek($file, 0) !== 0) {
+                    throw new RuntimeException($failure);
+                }
 
-            if (ftruncate($file, 0) === false
-                || rewind($file) === false
-                || fwrite($file, $identity) !== strlen($identity)
-                || fflush($file) === false) {
-                throw new RuntimeException("Unable to persist the client identity to [{$path}].");
+                $persisted = stream_get_contents($file);
+
+                if (! is_string($persisted)) {
+                    throw new RuntimeException($failure);
+                }
+
+                if ($persisted !== '') {
+                    return $persisted;
+                }
+
+                $identity = (string) Str::uuid7();
+
+                if (ftruncate($file, 0) === false
+                    || rewind($file) === false
+                    || fwrite($file, $identity) !== strlen($identity)
+                    || fflush($file) === false) {
+                    throw new RuntimeException($failure);
+                }
+
+                return $identity;
+            } finally {
+                flock($file, LOCK_UN);
+                fclose($file);
             }
-
-            return $identity;
         } catch (Throwable $exception) {
             if ($exception instanceof RuntimeException) {
                 throw $exception;
             }
 
-            throw new RuntimeException("Unable to persist the client identity to [{$path}].", previous: $exception);
-        } finally {
-            flock($file, LOCK_UN);
-            fclose($file);
+            throw new RuntimeException($failure, previous: $exception);
         }
     }
 

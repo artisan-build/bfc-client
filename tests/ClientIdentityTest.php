@@ -79,34 +79,54 @@ it('regenerates only when the persisted identity file is byte-empty', function (
 it('converges concurrent first resolvers on one persisted identity without artifacts', function () {
     $run = storage_path('app/bfc-client-race-'.bin2hex(random_bytes(8)));
     $storage = $run.'/host-storage';
-    $barrier = $run.'/release';
     $files = new Filesystem;
     $files->ensureDirectoryExists($run, 0700);
     $processes = [];
+    $workers = [];
+    $barrier = stream_socket_server('tcp://127.0.0.1:0', $errorCode, $errorMessage);
+
+    if ($barrier === false) {
+        throw new RuntimeException('Unable to create the identity fixture barrier.');
+    }
+
+    $barrierAddress = stream_socket_get_name($barrier, false);
+
+    if (! is_string($barrierAddress)) {
+        fclose($barrier);
+
+        throw new RuntimeException('Unable to resolve the identity fixture barrier.');
+    }
 
     try {
-        foreach (range(1, 8) as $worker) {
-            $ready = $run.'/ready-'.$worker;
+        foreach (range(1, 8) as $_worker) {
             $process = new Process([
                 PHP_BINARY,
                 __DIR__.'/Fixtures/resolve-client-identity.php',
                 dirname(__DIR__),
                 $storage,
-                $barrier,
-                $ready,
+                $barrierAddress,
             ]);
             $process->start();
             $processes[] = $process;
         }
 
-        $deadline = microtime(true) + 10;
-        do {
-            $ready = count(glob($run.'/ready-*') ?: []) === count($processes);
-            usleep(10_000);
-        } while (! $ready && microtime(true) < $deadline);
+        foreach ($processes as $_process) {
+            $worker = stream_socket_accept($barrier, 10);
 
-        expect($ready)->toBeTrue();
-        $files->put($barrier, 'go');
+            if ($worker === false || fgets($worker) !== "ready\n") {
+                throw new RuntimeException('An identity fixture worker did not reach the barrier.');
+            }
+
+            $workers[] = $worker;
+        }
+
+        expect(is_dir($storage.'/app/bfc-client'))->toBeFalse();
+
+        foreach ($workers as $worker) {
+            fwrite($worker, "go\n");
+            fclose($worker);
+        }
+        $workers = [];
 
         foreach ($processes as $process) {
             $process->wait();
@@ -121,6 +141,12 @@ it('converges concurrent first resolvers on one persisted identity without artif
             ->and(Str::isUuid($persisted))->toBeTrue()
             ->and(array_map('basename', glob(dirname($path).'/*') ?: []))->toBe(['identity']);
     } finally {
+        foreach ($workers as $worker) {
+            fclose($worker);
+        }
+
+        fclose($barrier);
+
         foreach ($processes as $process) {
             if ($process->isRunning()) {
                 $process->stop();

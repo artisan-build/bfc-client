@@ -12,18 +12,13 @@ require $argv[1].'/vendor/autoload.php';
 $app = new Application($argv[1]);
 $app->useStoragePath($argv[2]);
 $config = new Repository(['bfc-client' => ['identity' => null]]);
-$ready = $argv[4];
+$barrier = @stream_socket_client('tcp://'.$argv[3], $errorCode, $errorMessage, 10);
 
-file_put_contents($ready, 'ready');
-
-$deadline = microtime(true) + 10;
-while (! is_file($argv[3]) && microtime(true) < $deadline) {
-    usleep(5_000);
-}
-
-if (! is_file($argv[3])) {
-    fwrite(STDERR, 'The identity fixture barrier timed out.');
+if ($barrier === false || fwrite($barrier, "ready\n") !== 6 || fgets($barrier) !== "go\n") {
+    fwrite(STDERR, 'The identity fixture barrier failed.');
     exit(1);
 }
+
+fclose($barrier);
 
 fwrite(STDOUT, (new ClientIdentity($config, new Filesystem))->resolve());
