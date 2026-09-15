@@ -55,6 +55,74 @@ function b1Json(string $contents, string $label): array
         : throw new RuntimeException($label.' did not contain a JSON object.');
 }
 
+/** @return list<array{methods: list<string>, uri: string, name: ?string, middleware: list<string>}> */
+function b1RouteInventory(string $contents, string $label): array
+{
+    $routes = json_decode($contents, true);
+    if (! is_array($routes) || ! array_is_list($routes)) {
+        b1Fail($label.' did not contain a JSON route list.');
+    }
+
+    $inventory = [];
+    foreach ($routes as $route) {
+        if (! is_array($route)
+            || ! is_string($route['method'] ?? null)
+            || ! is_string($route['uri'] ?? null)
+            || (! is_null($route['name'] ?? null) && ! is_string($route['name']))
+            || ! is_array($route['middleware'] ?? null)
+            || ! array_is_list($route['middleware'])
+            || array_filter($route['middleware'], static fn (mixed $middleware): bool => ! is_string($middleware)) !== []) {
+            b1Fail($label.' contained an invalid route entry.');
+        }
+
+        $inventory[] = [
+            'methods' => explode('|', $route['method']),
+            'uri' => $route['uri'],
+            'name' => $route['name'] ?? null,
+            'middleware' => $route['middleware'],
+        ];
+    }
+
+    usort($inventory, static fn (array $left, array $right): int => [
+        $left['uri'],
+        $left['methods'],
+        $left['name'],
+        $left['middleware'],
+    ] <=> [
+        $right['uri'],
+        $right['methods'],
+        $right['name'],
+        $right['middleware'],
+    ]);
+
+    return $inventory;
+}
+
+/**
+ * @param  list<array{methods: list<string>, uri: string, name: ?string, middleware: list<string>}>  $expected
+ * @param  list<array{methods: list<string>, uri: string, name: ?string, middleware: list<string>}>  $actual
+ */
+function b1SameRouteInventory(array $expected, array $actual, string $label): void
+{
+    if ($expected === $actual) {
+        return;
+    }
+
+    $signatures = static fn (array $routes): array => array_map(
+        static fn (array $route): string => implode('|', $route['methods']).' '.$route['uri']
+            .' name='.($route['name'] ?? '<none>')
+            .' middleware='.implode(',', $route['middleware']),
+        $routes,
+    );
+    $expectedSignatures = $signatures($expected);
+    $actualSignatures = $signatures($actual);
+
+    b1Fail($label.' did not match; missing routes: '
+        .json_encode(array_values(array_diff($expectedSignatures, $actualSignatures)), JSON_THROW_ON_ERROR)
+        .'; unexpected routes: '
+        .json_encode(array_values(array_diff($actualSignatures, $expectedSignatures)), JSON_THROW_ON_ERROR).'.');
+}
+
 function b1Same(mixed $expected, mixed $actual, string $label): void
 {
     if ($expected !== $actual) {
@@ -315,6 +383,22 @@ try {
         b1Fail('The fresh source host auth-schema baseline could not be removed.');
     }
 
+    $sourceEnvironment = b1Environment([
+        'APP_ENV' => 'testing',
+        'APP_DEBUG' => 'false',
+        'APP_KEY' => 'base64:'.base64_encode(random_bytes(32)),
+        'CACHE_STORE' => 'file',
+        'SESSION_DRIVER' => 'array',
+        'MAIL_MAILER' => 'array',
+        'BFC_CLIENT_IDENTITY' => 'b1-live-source',
+    ]);
+    b1Run(['composer', 'install', '--no-interaction', '--prefer-dist', '--no-scripts'], $sourceHost, [], 'source baseline install');
+    b1Run([PHP_BINARY, 'artisan', 'package:discover', '--no-interaction'], $sourceHost, [], 'source baseline package discovery');
+    $baselineRouteInventory = b1RouteInventory(
+        b1Run([PHP_BINARY, 'artisan', 'route:list', '--json'], $sourceHost, $sourceEnvironment, 'source baseline route inventory'),
+        'source baseline route inventory',
+    );
+
     $sourceComposer = b1Json((string) file_get_contents($sourceHost.'/composer.json'), 'source composer');
     $candidate = b1Json((string) file_get_contents($sourcePackage.'/composer.json'), 'candidate composer');
     $candidate['version'] = '0.0.0+b1.'.$candidateSha;
@@ -331,16 +415,39 @@ try {
     $sourceLock = b1LockedPackage($sourceHost.'/composer.lock', 'artisan-build/bfc-client');
     b1Same($candidate['version'], $sourceLock['version'] ?? null, 'candidate installed version');
     b1Same($candidateSha, $sourceLock['dist']['reference'] ?? null, 'candidate installed reference');
-    $sourceEnvironment = b1Environment([
-        'APP_ENV' => 'testing',
-        'APP_DEBUG' => 'false',
-        'APP_KEY' => 'base64:'.base64_encode(random_bytes(32)),
-        'CACHE_STORE' => 'file',
-        'SESSION_DRIVER' => 'array',
-        'MAIL_MAILER' => 'array',
-        'BFC_CLIENT_IDENTITY' => 'b1-live-source',
-    ]);
     $inventory = b1Json(b1Run([PHP_BINARY, 'source-inventory.php'], $sourceHost, $sourceEnvironment, 'source inventory'), 'source inventory');
+    $candidateRouteInventory = b1RouteInventory(
+        b1Run([PHP_BINARY, 'artisan', 'route:list', '--json'], $sourceHost, $sourceEnvironment, 'source candidate route inventory'),
+        'source candidate route inventory',
+    );
+    $expectedRouteInventory = $baselineRouteInventory;
+    $expectedRouteInventory[] = [
+        'methods' => ['GET', 'HEAD'],
+        'uri' => 'bfc-client',
+        'name' => 'bfc-client.proof-of-life',
+        'middleware' => ['throttle:bfc-client'],
+    ];
+    usort($expectedRouteInventory, static fn (array $left, array $right): int => [
+        $left['uri'],
+        $left['methods'],
+        $left['name'],
+        $left['middleware'],
+    ] <=> [
+        $right['uri'],
+        $right['methods'],
+        $right['name'],
+        $right['middleware'],
+    ]);
+    b1SameRouteInventory(
+        $expectedRouteInventory,
+        $candidateRouteInventory,
+        'source complete route inventory (fresh Laravel baseline plus one BfC proof route)',
+    );
+    b1Same(
+        array_map(static fn (array $route): array => [$route['methods'], $route['uri']], $candidateRouteInventory),
+        $inventory['route_inventory'] ?? null,
+        'source emitted route inventory',
+    );
     b1Same(['ArtisanBuild\\BfcClient\\BfcClientServiceProvider'], $inventory['providers'] ?? null, 'source providers');
     b1Same([
         'App\\Providers\\AppServiceProvider',
@@ -365,11 +472,6 @@ try {
     b1Same([], $inventory['listener_files'] ?? null, 'source listener files');
     b1Same([], $inventory['registered_listeners'] ?? null, 'source registered listeners');
     b1Same([], $inventory['scheduled_tasks'] ?? null, 'source scheduled tasks');
-    b1Same([
-        [['GET', 'HEAD'], '/'],
-        [['GET', 'HEAD'], 'bfc-client'],
-        [['GET', 'HEAD'], 'up'],
-    ], $inventory['route_inventory'] ?? null, 'source route inventory');
     b1Same([[['GET', 'HEAD'], 'bfc-client', 'bfc-client.proof-of-life', ['throttle:bfc-client']]], $inventory['routes'] ?? null, 'source BfC routes');
     b1Same(['web'], $inventory['guards'] ?? null, 'source guards');
     b1Same(true, $inventory['identity_bound'] ?? null, 'source identity binding');
