@@ -375,6 +375,7 @@ try {
     b1Status($throttled, 429, 'source proof throttle');
     $sourceListener->stop();
     $sourceListener = null;
+    b1Run([PHP_BINARY, 'artisan', 'cache:clear', '--no-interaction'], $sourceHost, $sourceEnvironment, 'source proof limiter reset');
 
     $customEnvironment = array_merge($sourceEnvironment, ['BFC_CLIENT_PROOF_OF_LIFE_PATH' => 'custom-proof']);
     $sourceListener = P6LoopbackProcess::start(
