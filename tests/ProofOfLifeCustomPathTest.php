@@ -32,6 +32,7 @@ final class ProofOfLifeCustomPathTest extends TestCase
         $this->getJson('/internal/bfc-ping')
             ->assertOk()
             ->assertExactJson([
+                'contract_major' => 2,
                 'package' => 'artisan-build/bfc-client',
                 'client_id' => 'custom-path-identity',
             ]);

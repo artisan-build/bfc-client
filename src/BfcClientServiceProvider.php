@@ -30,10 +30,12 @@ final class BfcClientServiceProvider extends ServiceProvider
 
         Factory::macro('withClientIdentity', function (): PendingRequest {
             /** @var Factory $this */
-            // replaceHeaders, not withHeaders: the validated identity must be
-            // the ONLY value on the wire, even when a conflicting header was
-            // pre-set via Http::globalOptions().
-            return $this->replaceHeaders([BfcHeaders::CLIENT_ID => app(ClientIdentity::class)->validated()]);
+            // One replacement applies the complete metadata contract so
+            // conflicting defaults cannot create duplicate field values.
+            return $this->replaceHeaders([
+                BfcHeaders::CONTRACT_VERSION => (string) BfcContract::MAJOR,
+                BfcHeaders::CLIENT_ID => app(ClientIdentity::class)->validated(),
+            ]);
         });
 
         $this->registerProofOfLifeRoute();

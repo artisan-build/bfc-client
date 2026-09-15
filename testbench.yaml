@@ -1,0 +1,10 @@
+laravel: '@testbench'
+
+providers:
+  - ArtisanBuild\BfcClient\BfcClientServiceProvider
+
+dont-discover:
+  - artisan-build/built-for-cloud
+
+workbench:
+  install: false

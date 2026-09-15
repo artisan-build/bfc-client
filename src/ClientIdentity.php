@@ -9,6 +9,7 @@ use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 use RuntimeException;
+use Throwable;
 
 final class ClientIdentity
 {
@@ -73,37 +74,58 @@ final class ClientIdentity
             return $configured;
         }
 
-        $path = $this->storagePath();
+        return $this->resolvePersisted($this->storagePath());
+    }
 
-        if ($this->files->exists($path)) {
-            $persisted = trim($this->files->get($path));
+    /**
+     * Generate a fresh identity while holding the identity file's lock. Using
+     * the target itself means every process observes one winner and no lock or
+     * temporary artifact remains after first resolution.
+     */
+    private function resolvePersisted(string $path): string
+    {
+        $this->files->ensureDirectoryExists(dirname($path), 0755);
+        $file = @fopen($path, 'c+b');
+
+        if ($file === false || ! flock($file, LOCK_EX)) {
+            throw new RuntimeException("Unable to persist the client identity to [{$path}].");
+        }
+
+        try {
+            if (fseek($file, 0) !== 0) {
+                throw new RuntimeException("Unable to persist the client identity to [{$path}].");
+            }
+
+            $persisted = stream_get_contents($file);
+
+            if (! is_string($persisted)) {
+                throw new RuntimeException("Unable to persist the client identity to [{$path}].");
+            }
 
             if ($persisted !== '') {
                 return $persisted;
             }
+
+            $identity = (string) Str::uuid7();
+
+            if (ftruncate($file, 0) === false
+                || rewind($file) === false
+                || fwrite($file, $identity) !== strlen($identity)
+                || fflush($file) === false) {
+                throw new RuntimeException("Unable to persist the client identity to [{$path}].");
+            }
+
+            return $identity;
+        } catch (Throwable $exception) {
+            if ($exception instanceof RuntimeException) {
+                throw $exception;
+            }
+
+            throw new RuntimeException("Unable to persist the client identity to [{$path}].", previous: $exception);
+        } finally {
+            flock($file, LOCK_UN);
+            fclose($file);
         }
-
-        return $this->generate($path);
-    }
-
-    /**
-     * Generate a fresh identity and persist it at the given path.
-     *
-     * The write takes an exclusive lock and the persisted value is read back
-     * and returned, so concurrent first resolutions converge on whatever the
-     * file ultimately holds rather than each returning its own candidate.
-     */
-    private function generate(string $path): string
-    {
-        $identity = Str::uuid7()->toString();
-
-        $this->files->ensureDirectoryExists(dirname($path), 0755);
-
-        if ($this->files->put($path, $identity, lock: true) === false) {
-            throw new RuntimeException("Unable to persist the client identity to [{$path}].");
-        }
-
-        return trim($this->files->get($path));
     }
 
     private function storagePath(): string
