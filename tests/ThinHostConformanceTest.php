@@ -42,7 +42,7 @@ it('boots only the declared client package surface', function (): void {
         ->and(array_keys((array) config('bfc-client')))->toBe(['identity', 'proof_of_life'])
         ->and($routes)->toBe([[['GET', 'HEAD'], 'bfc-client', 'bfc-client.proof-of-life', ['throttle:bfc-client']]])
         ->and(array_values(array_filter($commands, static fn (string $command): bool => str_starts_with($command, 'bfc'))))->toBe([])
-        ->and(array_values(array_filter($migrationPaths, static fn (string $path): bool => str_contains($path, 'BfcClient'))))->toBe([])
+        ->and($migrationPaths)->toBe([])
         ->and(array_keys(is_array($auth['guards'] ?? null) ? $auth['guards'] : []))->not->toContain('bfc')
         ->and(array_keys(is_array($auth['guards'] ?? null) ? $auth['guards'] : []))->not->toContain('bfc-console')
         ->and($views)->toBeInstanceOf(FileViewFinder::class)
