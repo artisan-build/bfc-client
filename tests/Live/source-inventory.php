@@ -96,7 +96,7 @@ $artisanDependencies = array_values(array_filter(
     static fn (string $package): bool => str_starts_with($package, 'artisan-build/'),
 ));
 sort($artisanDependencies);
-$viewFinder = $app->make('view.finder');
+$viewFinder = $app->make('view')->getFinder();
 $packageViewHints = [];
 if ($viewFinder instanceof FileViewFinder) {
     foreach ($viewFinder->getHints() as $namespace => $paths) {
