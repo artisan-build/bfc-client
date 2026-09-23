@@ -30,7 +30,7 @@ it('boots only the declared client package surface', function (): void {
     $commands = array_keys(Artisan::all());
     $migrationPaths = $this->app->make(Migrator::class)->paths();
     $auth = config('auth');
-    $views = $this->app->make('view.finder');
+    $views = $this->app->make('view')->getFinder();
     $composer = json_decode((string) file_get_contents(dirname(__DIR__).'/composer.json'), true, flags: JSON_THROW_ON_ERROR);
 
     expect($providers)->toBe([BfcClientServiceProvider::class])
