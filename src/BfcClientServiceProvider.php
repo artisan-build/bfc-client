@@ -21,6 +21,17 @@ final class BfcClientServiceProvider extends ServiceProvider
         $this->mergeConfigFrom(__DIR__.'/../config/bfc-client.php', 'bfc-client');
 
         $this->app->singleton(ClientIdentity::class);
+
+        // A factory built with no dispatcher and none of the host's global
+        // middleware or options, so credential-bearing package traffic is
+        // never published to host listeners or reshaped by the host. See
+        // BfcHttp.
+        //
+        // The closure is not optional: container auto-resolution would
+        // satisfy the constructor's `?Dispatcher` from the host's bound
+        // dispatcher and hand back the very thing this binding exists to
+        // avoid.
+        $this->app->singleton(BfcHttpFactory::class, static fn (): BfcHttpFactory => new BfcHttpFactory);
     }
 
     public function boot(): void
