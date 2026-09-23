@@ -13,6 +13,7 @@ use Illuminate\Http\Client\Events\RequestSending;
 use Illuminate\Http\Client\Events\ResponseReceived;
 use Illuminate\Http\Client\Factory;
 use Illuminate\Http\Client\PendingRequest;
+use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
 use Psr\Http\Message\RequestInterface;
@@ -34,7 +35,7 @@ function bfcObserveAsHost(ArrayObject $observed): void
 {
     foreach ([RequestSending::class, ResponseReceived::class, ConnectionFailed::class] as $event) {
         Event::listen($event, static function (object $payload) use ($observed, $event): void {
-            /** @var object{request: \Illuminate\Http\Client\Request} $payload */
+            /** @var object{request: Request} $payload */
             $observed[] = [
                 'channel' => 'listener:'.$event,
                 'payload' => (string) json_encode($payload->request->headers()),
@@ -205,7 +206,7 @@ it('fakes independently of the host shared factory', function () {
     BfcHttp::withClientIdentity()->post('https://provider.test/private');
 
     BfcHttp::factory()->assertSent(
-        static fn (Illuminate\Http\Client\Request $request): bool => $request->url() === 'https://provider.test/private'
+        static fn (Request $request): bool => $request->url() === 'https://provider.test/private'
             && $request->header(BfcHeaders::CLIENT_ID) === ['client-abc-123'],
     );
 
