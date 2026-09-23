@@ -26,15 +26,32 @@ The label is not a credential and never selects an installation, purpose, audien
 
 ## Outbound Metadata
 
-The `Http::withClientIdentity()` macro replaces conflicting defaults with exactly one validated client-ID field and one frozen contract-major field. Compose it with the opaque, package-issued, fixed-purpose credential required by the destination:
+The `withClientIdentity()` macro replaces conflicting defaults with exactly one validated client-ID field and one frozen contract-major field. Compose it with the opaque, package-issued, fixed-purpose credential required by the destination.
+
+**Send credential-bearing requests through `BfcHttp`, not through the `Http` facade.**
 
 ```php
-use Illuminate\Support\Facades\Http;
+use ArtisanBuild\BfcClient\BfcHttp;
 
-Http::withClientIdentity()
+BfcHttp::withClientIdentity()
     ->withToken($credential)
     ->post('https://provider.example/api/things', $payload);
 ```
+
+`Http::` is the application's shared `Illuminate\Http\Client\Factory`. It is built with the application's event dispatcher and carries the application's global HTTP middleware and options, so every request sent through it is published whole to `RequestSending` and `ResponseReceived` listeners and is handed to app-global middleware. Benign host instrumentation — Telescope, Nightwatch, an error tracker — therefore reads any bearer token or one-time code in full, and host middleware can reshape the request. `BfcHttp::factory()` is a package-private factory built with no dispatcher and none of the host's global middleware or options, so those events are undispatchable rather than merely unsubscribed. `Factory::macro` is static, so the macro behaves identically on both.
+
+The trade is symmetric and deliberate: a host's `Http::fake()` does not reach the private factory. Fake and assert on it directly:
+
+```php
+use ArtisanBuild\BfcClient\BfcHttp;
+use Illuminate\Http\Client\Request;
+
+BfcHttp::factory()->fake();
+
+BfcHttp::factory()->assertSent(fn (Request $request): bool => $request->url() === 'https://provider.example/api/things');
+```
+
+`Http::withClientIdentity()` stays available and is the right choice for a request that carries no credential, where host instrumentation is a benefit rather than a leak.
 
 The macro adds no retry. Consumers remain responsible for fail-open versus fail-loud behavior, operation-specific retries, `Retry-After`, and idempotency keys. A caller-created credential and idempotency key remain ordinary pending-request options across caller-driven retries.
 
