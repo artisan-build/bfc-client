@@ -59,10 +59,13 @@ it('registers the route under the expected name', function () {
 
 it('throttles the route with the named bfc-client limiter', function () {
     $route = Route::getRoutes()->getByName('bfc-client.proof-of-life');
+    $limit = (RateLimiter::limiter('bfc-client'))(request());
 
     expect($route)->not->toBeNull()
         ->and($route->middleware())->toContain('throttle:bfc-client')
-        ->and(RateLimiter::limiter('bfc-client'))->not->toBeNull();
+        ->and(RateLimiter::limiter('bfc-client'))->not->toBeNull()
+        ->and($limit->maxAttempts)->toBe(60)
+        ->and($limit->decaySeconds)->toBe(60);
 });
 
 it('responds 200 for a guest request on an app with no auth guard at all', function () {
