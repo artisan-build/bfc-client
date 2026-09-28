@@ -89,14 +89,14 @@ foreach (Artisan::all() as $name => $command) {
 sort($commands);
 $migrationPaths = array_values(array_filter(
     $app->make(Migrator::class)->paths(),
-    static fn (string $path): bool => str_contains(strtolower($path), 'artisanbuild'),
+    static fn (string $path): bool => str_contains(strtolower($path), 'artisan-build'),
 ));
 $artisanDependencies = array_values(array_filter(
     InstalledVersions::getInstalledPackages(),
     static fn (string $package): bool => str_starts_with($package, 'artisan-build/'),
 ));
 sort($artisanDependencies);
-$viewFinder = $app->make('view.finder');
+$viewFinder = $app->make('view')->getFinder();
 $packageViewHints = [];
 if ($viewFinder instanceof FileViewFinder) {
     foreach ($viewFinder->getHints() as $namespace => $paths) {
