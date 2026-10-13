@@ -41,3 +41,69 @@ jobs:
 
       - name: Run Tests
         run: composer test
+
+  lowest-deps:
+    name: tests (lowest deps) - Laravel ${{ matrix.laravel }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - laravel: '11'
+            illuminate: '^11.17'
+            testbench: '^9.0'
+            pest: '^3.0'
+          - laravel: '12'
+            illuminate: '^12.0'
+            testbench: '^10.0'
+            pest: '^3.0'
+          - laravel: '13'
+            illuminate: '^13.0'
+            testbench: '^11.0'
+            pest: '^4.0'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@7c071dfe9dc99bdf297fa79cb49ea005b9fcadbc # v2
+        with:
+          php-version: '8.5'
+          tools: composer:v2
+          coverage: none
+
+      - name: Pin Laravel ${{ matrix.laravel }} dependencies
+        run: |
+          composer config audit.block-insecure false
+          composer require --no-update \
+            illuminate/cache:${{ matrix.illuminate }} \
+            illuminate/contracts:${{ matrix.illuminate }} \
+            illuminate/filesystem:${{ matrix.illuminate }} \
+            illuminate/http:${{ matrix.illuminate }} \
+            illuminate/routing:${{ matrix.illuminate }} \
+            illuminate/support:${{ matrix.illuminate }}
+          composer require --dev --no-update \
+            orchestra/testbench:${{ matrix.testbench }} \
+            pestphp/pest:${{ matrix.pest }}
+
+      - name: Exclude Laravel 13-only development harnesses
+        if: matrix.laravel != '13'
+        run: |
+          composer remove --dev --no-update \
+            artisan-build/built-for-cloud \
+            larastan/larastan
+          rm \
+            tests/P6TestCase.php \
+            tests/PublishedP6CompatibilityTest.php \
+            tests/ThinHostConformanceTest.php
+
+      - name: Install lowest dependencies
+        run: composer update --prefer-lowest --prefer-stable -W --no-interaction
+
+      - name: Show resolved Laravel version
+        run: composer show laravel/framework || composer show illuminate/support
+
+      - name: Run Tests
+        run: composer test
