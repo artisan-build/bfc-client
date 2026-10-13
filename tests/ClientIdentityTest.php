@@ -101,6 +101,8 @@ it('converges concurrent first resolvers on one persisted identity without artif
         foreach (range(1, 8) as $_worker) {
             $process = new Process([
                 PHP_BINARY,
+                '-d',
+                'error_reporting='.(E_ALL & ~E_DEPRECATED & ~E_USER_DEPRECATED),
                 __DIR__.'/Fixtures/resolve-client-identity.php',
                 dirname(__DIR__),
                 $storage,
