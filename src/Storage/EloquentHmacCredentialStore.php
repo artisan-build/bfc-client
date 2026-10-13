@@ -8,7 +8,6 @@ use ArtisanBuild\BfcClient\BoundCredentialScope;
 use ArtisanBuild\BfcClient\Contracts\HmacCredentialStore;
 use ArtisanBuild\BfcClient\CredentialMaterialRole;
 use ArtisanBuild\BfcClient\StoredHmacCredential;
-use ArtisanBuild\BfcClient\Subject;
 use Carbon\CarbonImmutable;
 use Closure;
 use Illuminate\Database\QueryException;
