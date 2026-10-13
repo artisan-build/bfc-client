@@ -51,4 +51,13 @@ return [
         'path' => env('BFC_CLIENT_PROOF_OF_LIFE_PATH', 'bfc-client'),
     ],
 
+    'credentials' => [
+        'app_purposes' => [],
+    ],
+
+    'hmac' => [
+        'timestamp_tolerance_seconds' => 300,
+        'verification_rate_ceiling' => 1000,
+    ],
+
 ];

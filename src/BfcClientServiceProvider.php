@@ -36,6 +36,8 @@ final class BfcClientServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        $this->loadMigrationsFrom(__DIR__.'/../database/migrations');
+
         $this->publishes([
             __DIR__.'/../config/bfc-client.php' => config_path('bfc-client.php'),
         ], 'bfc-client-config');
