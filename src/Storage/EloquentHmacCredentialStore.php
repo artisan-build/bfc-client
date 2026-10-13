@@ -96,6 +96,11 @@ final class EloquentHmacCredentialStore implements HmacCredentialStore
         HmacCredentialBinding::createVerificationCopy($model, $credential->scope);
     }
 
+    public function allowsAfterSignature(StoredHmacCredential $credential): bool
+    {
+        return true;
+    }
+
     public function stampUsage(string $credentialId, CarbonImmutable $usedAt): void
     {
         HmacCredential::query()->whereKey($credentialId)->update(['last_used_at' => $usedAt]);

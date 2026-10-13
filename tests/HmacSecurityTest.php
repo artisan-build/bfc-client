@@ -197,7 +197,11 @@ final class RecordingHmacCredentialStore implements HmacCredentialStore
 
     public int $usageStamps = 0;
 
+    public int $admissions = 0;
+
     public int $versionScans = 0;
+
+    public bool $allowAfterSignature = true;
 
     public function __construct(private readonly HmacCredentialStore $delegate) {}
 
@@ -219,6 +223,13 @@ final class RecordingHmacCredentialStore implements HmacCredentialStore
     {
         $this->inserts++;
         $this->delegate->insertVerificationCopy($credential);
+    }
+
+    public function allowsAfterSignature(StoredHmacCredential $credential): bool
+    {
+        $this->admissions++;
+
+        return $this->allowAfterSignature && $this->delegate->allowsAfterSignature($credential);
     }
 
     public function stampUsage(string $credentialId, CarbonImmutable $usedAt): void
@@ -675,8 +686,27 @@ it('runs install verification usage and cutover algorithms through the credentia
     expect($recording->transactions)->toBe(1)
         ->and($recording->finds)->toBeGreaterThanOrEqual(2)
         ->and($recording->inserts)->toBe(1)
+        ->and($recording->admissions)->toBe(1)
         ->and($recording->usageStamps)->toBe(1)
         ->and($recording->versionScans)->toBe(1);
+});
+
+it('supports post-signature admission without spending replay or rate state', function (): void {
+    $recording = new RecordingHmacCredentialStore(app(HmacCredentialStore::class));
+    $recording->allowAfterSignature = false;
+    app()->instance(HmacCredentialStore::class, $recording);
+    $scope = clientHmacScope();
+    $key = bin2hex(random_bytes(32));
+    $credential = storedClientHmac($scope, $key);
+    $nonce = bin2hex(random_bytes(16));
+    $header = signedClientHeader($credential, $key, $scope, 'body', nonce: $nonce);
+
+    expect(hmacFailureReason(fn () => app(HmacVerifier::class)->verifyBound($scope, $header, 'body')))
+        ->toBe('unusable_key')
+        ->and($recording->admissions)->toBe(1)
+        ->and($recording->usageStamps)->toBe(0)
+        ->and(Cache::has('bfc:hmac:rate:'.$credential->id))->toBeFalse()
+        ->and(Cache::has('bfc:hmac:nonce:'.hash('sha256', $credential->id.'|'.$nonce)))->toBeFalse();
 });
 
 it('shares unbound verification without a table-specific verifier branch', function (): void {

@@ -23,6 +23,8 @@ interface HmacCredentialStore
 
     public function insertVerificationCopy(StoredHmacCredential $credential): void;
 
+    public function allowsAfterSignature(StoredHmacCredential $credential): bool;
+
     public function stampUsage(string $credentialId, CarbonImmutable $usedAt): void;
 
     public function hasKeyVersionOtherThan(string $writeVersion): bool;

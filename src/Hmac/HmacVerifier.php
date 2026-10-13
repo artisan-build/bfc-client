@@ -118,6 +118,10 @@ final class HmacVerifier
             throw HmacVerificationFailed::invalidSignature();
         }
 
+        if (! $this->credentials->allowsAfterSignature($credential)) {
+            throw HmacVerificationFailed::unusableKey();
+        }
+
         $this->consumeReplayRateAndUsage($credential, $envelope, $tolerance);
     }
 
