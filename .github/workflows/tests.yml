@@ -50,7 +50,7 @@ jobs:
       matrix:
         include:
           - laravel: '11'
-            illuminate: '^11.17'
+            illuminate: '11.17.0'
             testbench: '^9.0'
             pest: '^3.0'
           - laravel: '12'
