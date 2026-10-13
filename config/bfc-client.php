@@ -56,6 +56,7 @@ return [
     ],
 
     'hmac' => [
+        'audience' => null,
         'timestamp_tolerance_seconds' => 300,
         'verification_rate_ceiling' => 1000,
     ],

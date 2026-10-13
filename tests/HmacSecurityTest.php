@@ -5,7 +5,10 @@ declare(strict_types=1);
 use ArtisanBuild\BfcClient\Actions\InstallHmacCredentialFromClaim;
 use ArtisanBuild\BfcClient\BoundCredentialScope;
 use ArtisanBuild\BfcClient\ClaimedHmacCredential;
+use ArtisanBuild\BfcClient\Contracts\HmacCredentialStore;
 use ArtisanBuild\BfcClient\Contracts\HmacCredentialIssuerClient;
+use ArtisanBuild\BfcClient\CredentialKind;
+use ArtisanBuild\BfcClient\CredentialMaterialRole;
 use ArtisanBuild\BfcClient\CredentialPurpose;
 use ArtisanBuild\BfcClient\CredentialStatus;
 use ArtisanBuild\BfcClient\Exceptions\HmacCredentialTransferRefused;
@@ -15,12 +18,12 @@ use ArtisanBuild\BfcClient\Hmac\HmacEnvelope;
 use ArtisanBuild\BfcClient\Hmac\HmacKeyring;
 use ArtisanBuild\BfcClient\Hmac\HmacVerifier;
 use ArtisanBuild\BfcClient\HmacCredentialTransfer;
-use ArtisanBuild\BfcClient\HmacMaterialRole;
 use ArtisanBuild\BfcClient\ImportedHmacSecret;
 use ArtisanBuild\BfcClient\IssuerHmacCutoverReceipt;
 use ArtisanBuild\BfcClient\SensitiveString;
 use ArtisanBuild\BfcClient\Storage\HmacCredential;
 use ArtisanBuild\BfcClient\Storage\HmacCredentialBinding;
+use ArtisanBuild\BfcClient\StoredHmacCredential;
 use ArtisanBuild\BfcClient\Subject;
 use ArtisanBuild\BfcClient\SubjectType;
 use Carbon\CarbonImmutable;
@@ -123,7 +126,7 @@ function clientIssuer(ClaimedHmacCredential $claimed): HmacCredentialIssuerClien
 function storedClientHmac(
     BoundCredentialScope $scope,
     string $key,
-    HmacMaterialRole $role = HmacMaterialRole::VerificationCopy,
+    ?CredentialMaterialRole $role = CredentialMaterialRole::VerificationCopy,
     CredentialStatus $status = CredentialStatus::Active,
     ?string $id = null,
     int $generation = 1,
@@ -145,8 +148,9 @@ function storedClientHmac(
     ])->save();
 
     match ($role) {
-        HmacMaterialRole::Originator => HmacCredentialBinding::createOriginator($credential, $scope),
-        HmacMaterialRole::VerificationCopy => HmacCredentialBinding::createVerificationCopy($credential, $scope),
+        CredentialMaterialRole::Originator => HmacCredentialBinding::createOriginator($credential, $scope),
+        CredentialMaterialRole::VerificationCopy => HmacCredentialBinding::createVerificationCopy($credential, $scope),
+        null => null,
     };
 
     return $credential;
@@ -183,6 +187,59 @@ function hmacFailureReason(Closure $operation): string
     throw new LogicException('The operation did not fail verification.');
 }
 
+final class RecordingHmacCredentialStore implements HmacCredentialStore
+{
+    public int $transactions = 0;
+
+    public int $finds = 0;
+
+    public int $inserts = 0;
+
+    public int $usageStamps = 0;
+
+    public int $versionScans = 0;
+
+    public function __construct(private readonly HmacCredentialStore $delegate) {}
+
+    public function transaction(Closure $operation): mixed
+    {
+        $this->transactions++;
+
+        return $this->delegate->transaction($operation);
+    }
+
+    public function find(string $credentialId, bool $lockForUpdate = false): ?StoredHmacCredential
+    {
+        $this->finds++;
+
+        return $this->delegate->find($credentialId, $lockForUpdate);
+    }
+
+    public function insertVerificationCopy(StoredHmacCredential $credential): void
+    {
+        $this->inserts++;
+        $this->delegate->insertVerificationCopy($credential);
+    }
+
+    public function stampUsage(string $credentialId, CarbonImmutable $usedAt): void
+    {
+        $this->usageStamps++;
+        $this->delegate->stampUsage($credentialId, $usedAt);
+    }
+
+    public function hasKeyVersionOtherThan(string $writeVersion): bool
+    {
+        $this->versionScans++;
+
+        return $this->delegate->hasKeyVersionOtherThan($writeVersion);
+    }
+
+    public function isConcurrencyConflict(Throwable $failure): bool
+    {
+        return $this->delegate->isConcurrencyConflict($failure);
+    }
+}
+
 it('discovers the receiver migrations and resolves its public services', function (): void {
     expect(Schema::hasTable('bfc_client_hmac_credentials'))->toBeTrue()
         ->and(Schema::hasTable('bfc_client_hmac_bindings'))->toBeTrue()
@@ -206,8 +263,8 @@ it('installs an exact bound signing transfer as a versioned encrypted verificati
         ->and($result->algorithm)->toBe(HmacEnvelope::ALGORITHM)
         ->and($credential->purpose)->toBe(CredentialPurpose::Signing)
         ->and($credential->status)->toBe(CredentialStatus::Active)
-        ->and($binding->material_role)->toBe(HmacMaterialRole::VerificationCopy)
-        ->and($binding->exactlyMatches($credential, $scope, HmacMaterialRole::VerificationCopy))->toBeTrue()
+        ->and($binding->material_role)->toBe(CredentialMaterialRole::VerificationCopy)
+        ->and($binding->exactlyMatches($credential, $scope, CredentialMaterialRole::VerificationCopy))->toBeTrue()
         ->and($row->secret_ciphertext)->not->toBe($key)
         ->and($row->secret_ciphertext)->not->toContain($key)
         ->and($row->secret_key_version)->toBe(app(HmacKeyring::class)->writeVersion())
@@ -216,6 +273,7 @@ it('installs an exact bound signing transfer as a versioned encrypted verificati
 });
 
 it('refuses every malformed transfer fact and every inexact scope without partial state', function (): void {
+    $this->freezeTime();
     $scope = clientHmacScope();
     $key = bin2hex(random_bytes(32));
     $delivered = CarbonImmutable::now()->startOfSecond();
@@ -360,7 +418,7 @@ it('keeps claim and key material out of transfer failures and serialization', fu
         ->and(fn () => json_encode($sealed->secret, JSON_THROW_ON_ERROR))->toThrow(LogicException::class);
 });
 
-it('verifies a canonical body-bound signature for either allowed bound material role', function (HmacMaterialRole $role): void {
+it('verifies a canonical body-bound signature for either allowed bound material role', function (CredentialMaterialRole $role): void {
     $scope = clientHmacScope();
     $key = bin2hex(random_bytes(32));
     $credential = storedClientHmac($scope, $key, $role);
@@ -374,8 +432,8 @@ it('verifies a canonical body-bound signature for either allowed bound material 
         ->and($verified->algorithm)->toBe(HmacEnvelope::ALGORITHM)
         ->and($credential->refresh()->last_used_at)->not->toBeNull();
 })->with([
-    'originator' => HmacMaterialRole::Originator,
-    'verification copy' => HmacMaterialRole::VerificationCopy,
+    'originator' => CredentialMaterialRole::Originator,
+    'verification copy' => CredentialMaterialRole::VerificationCopy,
 ]);
 
 it('pins canonical wire form, algorithm, body, signature, and audience to stable reasons', function (): void {
@@ -450,7 +508,7 @@ it('selects a key only by exact active scope and refuses before decrypt, replay,
             ->toBe('unusable_key');
     }
 
-    expect(Cache::has('bfc-client:hmac:rate:'.$credential->id))->toBeFalse()
+    expect(Cache::has('bfc:hmac:rate:'.$credential->id))->toBeFalse()
         ->and($credential->refresh()->last_used_at)->toBeNull();
 });
 
@@ -491,14 +549,14 @@ it('checks replay only after signature validity and spends no new rate budget on
     $scope = clientHmacScope();
     $key = bin2hex(random_bytes(32));
     $credential = storedClientHmac($scope, $key);
-    $rateKey = 'bfc-client:hmac:rate:'.$credential->id;
+    $rateKey = 'bfc:hmac:rate:'.$credential->id;
     $invalidNonce = bin2hex(random_bytes(16));
     $invalid = signedClientHeader($credential, $key, $scope, 'body', nonce: $invalidNonce);
     $invalid = substr($invalid, 0, -1).($invalid[-1] === '0' ? '1' : '0');
 
     expect(hmacFailureReason(fn () => app(HmacVerifier::class)->verifyBound($scope, $invalid, 'body')))->toBe('invalid_signature')
         ->and(Cache::has($rateKey))->toBeFalse()
-        ->and(Cache::has('bfc-client:hmac:nonce:'.hash('sha256', $credential->id.'|'.$invalidNonce)))->toBeFalse();
+        ->and(Cache::has('bfc:hmac:nonce:'.hash('sha256', $credential->id.'|'.$invalidNonce)))->toBeFalse();
 
     $captured = signedClientHeader($credential, $key, $scope, 'one');
     app(HmacVerifier::class)->verifyBound($scope, $captured, 'one');
@@ -517,7 +575,7 @@ it('checks replay only after signature validity and spends no new rate budget on
     $overflowNonce = bin2hex(random_bytes(16));
     $overflow = signedClientHeader($credential, $key, $scope, 'four', nonce: $overflowNonce);
     expect(hmacFailureReason(fn () => app(HmacVerifier::class)->verifyBound($scope, $overflow, 'four')))->toBe('rate_limited')
-        ->and(Cache::has('bfc-client:hmac:nonce:'.hash('sha256', $credential->id.'|'.$overflowNonce)))->toBeFalse();
+        ->and(Cache::has('bfc:hmac:nonce:'.hash('sha256', $credential->id.'|'.$overflowNonce)))->toBeFalse();
 });
 
 it('keeps nonce coverage through the last valid replay instant', function (): void {
@@ -576,4 +634,85 @@ it('round-trips versioned encryption and reads previous application keys after r
 
     expect($keyring->writeVersion())->not->toBe($encrypted->keyVersion)
         ->and($keyring->decrypt($encrypted->ciphertext, $encrypted->keyVersion))->toBe($plaintext);
+});
+
+it('preserves the shared credential purpose vocabulary and behavior', function (): void {
+    expect(CredentialPurpose::values())->toBe([
+        'operator_management',
+        'dashboard_metadata',
+        'consumption',
+        'mcp',
+        'signing',
+        'signing_root',
+        'enrollment',
+        'system_deployment',
+    ])->and(CredentialPurpose::Signing->allowedFor(CredentialKind::Hmac, SubjectType::Installation))->toBeTrue()
+        ->and(CredentialPurpose::Consumption->allowedFor(CredentialKind::Hmac, SubjectType::Installation))->toBeFalse()
+        ->and(CredentialPurpose::SigningRoot->validForStorage(
+            CredentialKind::Hmac,
+            SubjectType::Installation,
+            CredentialPurpose::SIGNING_ROOT_SUBJECT_REF,
+        ))->toBeTrue();
+});
+
+it('runs install verification usage and cutover algorithms through the credential store port', function (): void {
+    $recording = new RecordingHmacCredentialStore(app(HmacCredentialStore::class));
+    app()->instance(HmacCredentialStore::class, $recording);
+    $scope = clientHmacScope();
+    $key = bin2hex(random_bytes(32));
+    $claimed = clientClaimed($scope, $key);
+
+    $installed = app(InstallHmacCredentialFromClaim::class)(
+        $scope,
+        clientIssuer($claimed),
+        bin2hex(random_bytes(32)),
+    );
+    $model = HmacCredential::query()->findOrFail($installed->credentialId);
+    $header = signedClientHeader($model, $key, $scope, 'body');
+    app(HmacVerifier::class)->verifyBound($scope, $header, 'body');
+    app(HmacKeyring::class)->cutoverInProgress();
+
+    expect($recording->transactions)->toBe(1)
+        ->and($recording->finds)->toBeGreaterThanOrEqual(2)
+        ->and($recording->inserts)->toBe(1)
+        ->and($recording->usageStamps)->toBe(1)
+        ->and($recording->versionScans)->toBe(1);
+});
+
+it('shares unbound verification without a table-specific verifier branch', function (): void {
+    $scope = clientHmacScope();
+    $key = bin2hex(random_bytes(32));
+    $credential = storedClientHmac($scope, $key, role: null);
+    $header = signedClientHeader($credential, $key, $scope, 'body');
+    config()->set('bfc-client.hmac.audience', $scope->audience);
+
+    expect(hmacFailureReason(fn () => app(HmacVerifier::class)->verify(
+        new Subject($scope->subject->type, 'other-subject'),
+        $header,
+        'body',
+    )))->toBe('unusable_key');
+
+    $verified = app(HmacVerifier::class)->verify($scope->subject, $header, 'body', $scope->audience);
+
+    expect($verified->credentialId)->toBe($credential->id)
+        ->and($verified->scope)->toBeNull()
+        ->and($credential->refresh()->last_used_at)->not->toBeNull();
+});
+
+it('reports keyring cutover for null and non-primary stored key versions', function (): void {
+    $scope = clientHmacScope();
+    $credential = storedClientHmac($scope, bin2hex(random_bytes(32)));
+    $keyring = app(HmacKeyring::class);
+
+    expect($keyring->cutoverInProgress())->toBeFalse();
+
+    DB::table('bfc_client_hmac_credentials')->where('id', $credential->id)->update([
+        'secret_key_version' => null,
+    ]);
+    expect($keyring->cutoverInProgress())->toBeTrue();
+
+    DB::table('bfc_client_hmac_credentials')->where('id', $credential->id)->update([
+        'secret_key_version' => str_repeat('0', 16),
+    ]);
+    expect($keyring->cutoverInProgress())->toBeTrue();
 });

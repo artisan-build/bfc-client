@@ -8,7 +8,7 @@ final readonly class VerifiedHmacCredential
 {
     public function __construct(
         public string $credentialId,
-        public BoundCredentialScope $scope,
+        public ?BoundCredentialScope $scope,
         public string $algorithm = 'hmac-sha256',
     ) {}
 }

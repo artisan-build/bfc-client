@@ -4,7 +4,11 @@ declare(strict_types=1);
 
 namespace ArtisanBuild\BfcClient;
 
+use ArtisanBuild\BfcClient\Contracts\HmacAppPurposeRegistry;
+use ArtisanBuild\BfcClient\Contracts\HmacCredentialStore;
+use ArtisanBuild\BfcClient\Contracts\HmacVerificationConfiguration;
 use ArtisanBuild\BfcClient\Http\Controllers\ProofOfLifeController;
+use ArtisanBuild\BfcClient\Storage\EloquentHmacCredentialStore;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Client\Factory;
 use Illuminate\Http\Client\PendingRequest;
@@ -21,6 +25,9 @@ final class BfcClientServiceProvider extends ServiceProvider
         $this->mergeConfigFrom(__DIR__.'/../config/bfc-client.php', 'bfc-client');
 
         $this->app->singleton(ClientIdentity::class);
+        $this->app->singleton(HmacAppPurposeRegistry::class, AppPurposeRegistry::class);
+        $this->app->singleton(HmacCredentialStore::class, EloquentHmacCredentialStore::class);
+        $this->app->singleton(HmacVerificationConfiguration::class, ConfiguredHmacVerification::class);
 
         // A factory built with no dispatcher and none of the host's global
         // middleware or options, so credential-bearing package traffic is
@@ -36,7 +43,7 @@ final class BfcClientServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
-        $this->loadMigrationsFrom(__DIR__.'/../database/migrations');
+        $this->loadMigrationsFrom(dirname(__DIR__).'/database/migrations');
 
         $this->publishes([
             __DIR__.'/../config/bfc-client.php' => config_path('bfc-client.php'),

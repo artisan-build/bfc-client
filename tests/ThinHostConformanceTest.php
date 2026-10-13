@@ -4,7 +4,11 @@ declare(strict_types=1);
 
 use ArtisanBuild\BfcClient\BfcClientServiceProvider;
 use ArtisanBuild\BfcClient\ClientIdentity;
+use ArtisanBuild\BfcClient\Contracts\HmacAppPurposeRegistry;
+use ArtisanBuild\BfcClient\Contracts\HmacCredentialStore;
+use ArtisanBuild\BfcClient\Contracts\HmacVerificationConfiguration;
 use ArtisanBuild\BfcClient\Install\InstallFiles;
+use ArtisanBuild\BfcClient\Storage\EloquentHmacCredentialStore;
 use ArtisanBuild\BuiltForCloud\BuiltForCloudServiceProvider;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Database\Migrations\Migrator;
@@ -36,13 +40,17 @@ it('boots only the declared client package surface', function (): void {
     expect($providers)->toBe([BfcClientServiceProvider::class])
         ->and($this->app->bound(ClientIdentity::class))->toBeTrue()
         ->and($this->app->make(ClientIdentity::class))->toBe($this->app->make(ClientIdentity::class))
+        ->and($this->app->make(HmacAppPurposeRegistry::class))->toBe($this->app->make(HmacAppPurposeRegistry::class))
+        ->and($this->app->make(HmacCredentialStore::class))->toBeInstanceOf(EloquentHmacCredentialStore::class)
+        ->and($this->app->make(HmacCredentialStore::class))->toBe($this->app->make(HmacCredentialStore::class))
+        ->and($this->app->make(HmacVerificationConfiguration::class))->toBe($this->app->make(HmacVerificationConfiguration::class))
         ->and(Factory::hasMacro('withClientIdentity'))->toBeTrue()
         ->and(RateLimiter::limiter('bfc-client'))->toBeInstanceOf(Closure::class)
         ->and((RateLimiter::limiter('bfc-client'))(request()))->toBeInstanceOf(Limit::class)
-        ->and(array_keys((array) config('bfc-client')))->toBe(['identity', 'proof_of_life'])
+        ->and(array_keys((array) config('bfc-client')))->toBe(['identity', 'proof_of_life', 'credentials', 'hmac'])
         ->and($routes)->toBe([[['GET', 'HEAD'], 'bfc-client', 'bfc-client.proof-of-life', ['throttle:bfc-client']]])
         ->and(array_values(array_filter($commands, static fn (string $command): bool => str_starts_with($command, 'bfc'))))->toBe([])
-        ->and($migrationPaths)->toBe([])
+        ->and($migrationPaths)->toBe([dirname(__DIR__).'/database/migrations'])
         ->and(array_keys(is_array($auth['guards'] ?? null) ? $auth['guards'] : []))->not->toContain('bfc')
         ->and(array_keys(is_array($auth['guards'] ?? null) ? $auth['guards'] : []))->not->toContain('bfc-console')
         ->and($views)->toBeInstanceOf(FileViewFinder::class)

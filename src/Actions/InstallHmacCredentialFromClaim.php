@@ -4,30 +4,31 @@ declare(strict_types=1);
 
 namespace ArtisanBuild\BfcClient\Actions;
 
-use ArtisanBuild\BfcClient\AppPurposeRegistry;
 use ArtisanBuild\BfcClient\BoundCredentialScope;
 use ArtisanBuild\BfcClient\ClaimedHmacCredential;
+use ArtisanBuild\BfcClient\Contracts\HmacAppPurposeRegistry;
+use ArtisanBuild\BfcClient\Contracts\HmacCredentialStore;
 use ArtisanBuild\BfcClient\Contracts\HmacCredentialIssuerClient;
+use ArtisanBuild\BfcClient\CredentialMaterialRole;
 use ArtisanBuild\BfcClient\CredentialPurpose;
 use ArtisanBuild\BfcClient\CredentialStatus;
 use ArtisanBuild\BfcClient\Exceptions\HmacCredentialTransferRefused;
 use ArtisanBuild\BfcClient\Hmac\HmacEnvelope;
 use ArtisanBuild\BfcClient\Hmac\HmacKeyring;
-use ArtisanBuild\BfcClient\HmacMaterialRole;
 use ArtisanBuild\BfcClient\InstalledHmacCredential;
 use ArtisanBuild\BfcClient\SensitiveString;
-use ArtisanBuild\BfcClient\Storage\HmacCredential;
-use ArtisanBuild\BfcClient\Storage\HmacCredentialBinding;
-use Illuminate\Database\QueryException;
-use Illuminate\Support\Facades\DB;
+use ArtisanBuild\BfcClient\StoredHmacCredential;
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Str;
 use SensitiveParameter;
+use Throwable;
 
 final class InstallHmacCredentialFromClaim
 {
     public function __construct(
-        private readonly AppPurposeRegistry $purposes,
+        private readonly HmacAppPurposeRegistry $purposes,
         private readonly HmacKeyring $keyring,
+        private readonly HmacCredentialStore $credentials,
     ) {}
 
     public function __invoke(
@@ -60,13 +61,11 @@ final class InstallHmacCredentialFromClaim
         $deliveryValidated = false;
 
         try {
-            return DB::transaction(function () use ($expectedScope, $claimed, &$deliveryValidated): InstalledHmacCredential {
+            return $this->credentials->transaction(function () use ($expectedScope, $claimed, &$deliveryValidated): InstalledHmacCredential {
                 return $this->install($expectedScope, $claimed, $deliveryValidated);
             });
-        } catch (QueryException $failure) {
-            $state = (string) ($failure->errorInfo[0] ?? $failure->getCode());
-
-            if (! $deliveryValidated || ! in_array($state, ['23000', '23505', '40001', '40P01'], true)) {
+        } catch (Throwable $failure) {
+            if (! $deliveryValidated || ! $this->credentials->isConcurrencyConflict($failure)) {
                 throw $failure;
             }
 
@@ -90,7 +89,7 @@ final class InstallHmacCredentialFromClaim
         $locked = [];
 
         foreach ($ids as $id) {
-            $locked[$id] = HmacCredential::query()->whereKey($id)->lockForUpdate()->first();
+            $locked[$id] = $this->credentials->find($id, lockForUpdate: true);
         }
 
         $plaintext = $claimed->secret->reveal();
@@ -106,7 +105,7 @@ final class InstallHmacCredentialFromClaim
         $deliveryValidated = true;
         $existing = $locked[$transfer->issuerCredentialId] ?? null;
 
-        if ($existing instanceof HmacCredential) {
+        if ($existing instanceof StoredHmacCredential) {
             unset($plaintext);
 
             return $this->idempotentResult(
@@ -121,8 +120,8 @@ final class InstallHmacCredentialFromClaim
             ? null
             : ($locked[$transfer->predecessorCredentialId] ?? null);
 
-        if (($transfer->predecessorCredentialId !== null && ! $predecessor instanceof HmacCredential)
-            || ($predecessor instanceof HmacCredential
+        if (($transfer->predecessorCredentialId !== null && ! $predecessor instanceof StoredHmacCredential)
+            || ($predecessor instanceof StoredHmacCredential
                 && ! $this->validPredecessor($predecessor, $scope, $transfer->deliveryGeneration))) {
             unset($plaintext);
             throw new HmacCredentialTransferRefused;
@@ -131,41 +130,38 @@ final class InstallHmacCredentialFromClaim
         $encrypted = $this->keyring->encrypt($plaintext);
         unset($plaintext);
 
-        $credential = new HmacCredential;
-        $credential->forceFill([
-            'id' => $transfer->issuerCredentialId,
-            'purpose' => CredentialPurpose::Signing,
-            'subject_type' => $scope->subject->type,
-            'subject_ref' => $scope->subject->ref,
-            'status' => CredentialStatus::Active,
-            'secret_ciphertext' => $encrypted->ciphertext,
-            'secret_key_version' => $encrypted->keyVersion,
-            'delivered_at' => $transfer->deliveredAt,
-            'delivered_generation' => $transfer->deliveryGeneration,
-            'delivery_fingerprint' => $transfer->deliveryFingerprint,
-            'predecessor_credential_id' => $transfer->predecessorCredentialId,
-            'activated_at' => now(),
-            'expires_at' => $transfer->credentialExpiresAt,
-        ])->save();
-        HmacCredentialBinding::createVerificationCopy($credential, $scope);
+        $credential = new StoredHmacCredential(
+            id: $transfer->issuerCredentialId,
+            purpose: CredentialPurpose::Signing,
+            subject: $scope->subject,
+            status: CredentialStatus::Active,
+            secretCiphertext: $encrypted->ciphertext,
+            secretKeyVersion: $encrypted->keyVersion,
+            deliveredAt: $transfer->deliveredAt,
+            deliveryGeneration: $transfer->deliveryGeneration,
+            deliveryFingerprint: $transfer->deliveryFingerprint,
+            predecessorCredentialId: $transfer->predecessorCredentialId,
+            activatedAt: CarbonImmutable::instance(now()),
+            expiresAt: $transfer->credentialExpiresAt,
+            revokedAt: null,
+            scope: $scope,
+            materialRole: CredentialMaterialRole::VerificationCopy,
+            scopeHash: StoredHmacCredential::scopeHash($scope, CredentialMaterialRole::VerificationCopy),
+        );
+        $this->credentials->insertVerificationCopy($credential);
 
         return new InstalledHmacCredential($credential->id, $predecessor?->id, $scope);
     }
 
     private function validPredecessor(
-        HmacCredential $credential,
+        StoredHmacCredential $credential,
         BoundCredentialScope $scope,
         int $generation,
     ): bool {
-        $binding = HmacCredentialBinding::query()->whereKey($credential->id)->lockForUpdate()->first();
-
         return $credential->purpose === CredentialPurpose::Signing
-            && $credential->status === CredentialStatus::Active
-            && $credential->revoked_at === null
-            && ($credential->expires_at === null || $credential->expires_at->isFuture())
-            && $credential->delivered_generation <= $generation
-            && $binding instanceof HmacCredentialBinding
-            && $binding->exactlyMatches($credential, $scope, HmacMaterialRole::VerificationCopy);
+            && $credential->isActiveAt(now())
+            && $credential->deliveryGeneration <= $generation
+            && $credential->exactlyMatchesBoundScope($scope, CredentialMaterialRole::VerificationCopy);
     }
 
     private function idempotentResult(
@@ -174,16 +170,14 @@ final class InstallHmacCredentialFromClaim
         string $fingerprint,
         ?string $predecessorId,
     ): ?InstalledHmacCredential {
-        $credential = HmacCredential::query()->whereKey($credentialId)->first();
-        $binding = HmacCredentialBinding::query()->whereKey($credentialId)->first();
+        $credential = $this->credentials->find($credentialId);
 
-        if (! $credential instanceof HmacCredential
-            || ! $binding instanceof HmacCredentialBinding
+        if (! $credential instanceof StoredHmacCredential
             || $credential->purpose !== CredentialPurpose::Signing
             || $credential->status !== CredentialStatus::Active
-            || ! hash_equals($credential->delivery_fingerprint, $fingerprint)
-            || $credential->predecessor_credential_id !== $predecessorId
-            || ! $binding->exactlyMatches($credential, $scope, HmacMaterialRole::VerificationCopy)) {
+            || ! hash_equals($credential->deliveryFingerprint, $fingerprint)
+            || $credential->predecessorCredentialId !== $predecessorId
+            || ! $credential->exactlyMatchesBoundScope($scope, CredentialMaterialRole::VerificationCopy)) {
             return null;
         }
 

@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace ArtisanBuild\BfcClient\Hmac;
 
+use ArtisanBuild\BfcClient\Contracts\HmacCredentialStore;
 use ArtisanBuild\BfcClient\Exceptions\HmacKeyUnreadable;
-use ArtisanBuild\BfcClient\Storage\HmacCredential;
 use Illuminate\Encryption\Encrypter;
 use RuntimeException;
 use SensitiveParameter;
@@ -14,6 +14,8 @@ use Throwable;
 final class HmacKeyring
 {
     private const int KEY_VERSION_LENGTH = 16;
+
+    public function __construct(private readonly HmacCredentialStore $credentials) {}
 
     public function writeVersion(): string
     {
@@ -51,9 +53,7 @@ final class HmacKeyring
 
     public function cutoverInProgress(): bool
     {
-        return HmacCredential::query()
-            ->where('secret_key_version', '!=', $this->writeVersion())
-            ->exists();
+        return $this->credentials->hasKeyVersionOtherThan($this->writeVersion());
     }
 
     public static function fingerprint(#[SensitiveParameter] string $rawKeyBytes): string

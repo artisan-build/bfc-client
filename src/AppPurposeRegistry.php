@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace ArtisanBuild\BfcClient;
 
-final class AppPurposeRegistry
+use ArtisanBuild\BfcClient\Contracts\HmacAppPurposeRegistry;
+
+final class AppPurposeRegistry implements HmacAppPurposeRegistry
 {
     public function purpose(string $appPurpose): ?CredentialPurpose
     {

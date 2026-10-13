@@ -5,9 +5,10 @@ declare(strict_types=1);
 namespace ArtisanBuild\BfcClient\Storage;
 
 use ArtisanBuild\BfcClient\BoundCredentialScope;
+use ArtisanBuild\BfcClient\CredentialMaterialRole;
 use ArtisanBuild\BfcClient\CredentialPurpose;
 use ArtisanBuild\BfcClient\Hmac\HmacEnvelope;
-use ArtisanBuild\BfcClient\HmacMaterialRole;
+use ArtisanBuild\BfcClient\StoredHmacCredential;
 use Illuminate\Database\Eloquent\Model;
 
 /**
@@ -17,7 +18,7 @@ use Illuminate\Database\Eloquent\Model;
  * @property string $application_ref
  * @property string $audience
  * @property string $algorithm
- * @property HmacMaterialRole $material_role
+ * @property CredentialMaterialRole $material_role
  * @property string $scope_hash
  */
 final class HmacCredentialBinding extends Model
@@ -36,23 +37,23 @@ final class HmacCredentialBinding extends Model
     /** @return array<string, string> */
     protected function casts(): array
     {
-        return ['material_role' => HmacMaterialRole::class];
+        return ['material_role' => CredentialMaterialRole::class];
     }
 
     public static function createOriginator(HmacCredential $credential, BoundCredentialScope $scope): self
     {
-        return self::createForRole($credential, $scope, HmacMaterialRole::Originator);
+        return self::createForRole($credential, $scope, CredentialMaterialRole::Originator);
     }
 
     public static function createVerificationCopy(HmacCredential $credential, BoundCredentialScope $scope): self
     {
-        return self::createForRole($credential, $scope, HmacMaterialRole::VerificationCopy);
+        return self::createForRole($credential, $scope, CredentialMaterialRole::VerificationCopy);
     }
 
     public function exactlyMatches(
         HmacCredential $credential,
         BoundCredentialScope $scope,
-        HmacMaterialRole $role,
+        CredentialMaterialRole $role,
     ): bool {
         return $credential->subject_type === $scope->subject->type
             && hash_equals($credential->subject_ref, $scope->subject->ref)
@@ -66,31 +67,15 @@ final class HmacCredentialBinding extends Model
             && hash_equals($this->scope_hash, self::scopeHash($scope, $role));
     }
 
-    public static function scopeHash(BoundCredentialScope $scope, HmacMaterialRole $role): string
+    public static function scopeHash(BoundCredentialScope $scope, CredentialMaterialRole $role): string
     {
-        $preimage = "bfc-scope-v1\0";
-
-        foreach ([
-            $scope->subject->type->value,
-            $scope->subject->ref,
-            $scope->appPurpose,
-            CredentialPurpose::Signing->value,
-            $scope->installation,
-            $scope->application,
-            $scope->audience,
-            HmacEnvelope::ALGORITHM,
-            $role->value,
-        ] as $field) {
-            $preimage .= pack('N', strlen($field)).$field;
-        }
-
-        return hash('sha256', $preimage);
+        return StoredHmacCredential::scopeHash($scope, $role);
     }
 
     private static function createForRole(
         HmacCredential $credential,
         BoundCredentialScope $scope,
-        HmacMaterialRole $role,
+        CredentialMaterialRole $role,
     ): self {
         $binding = new self;
         $binding->forceFill([
