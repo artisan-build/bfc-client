@@ -83,6 +83,8 @@ jobs:
           composer require --no-update \
             illuminate/cache:${{ matrix.illuminate }} \
             illuminate/contracts:${{ matrix.illuminate }} \
+            illuminate/database:${{ matrix.illuminate }} \
+            illuminate/encryption:${{ matrix.illuminate }} \
             illuminate/filesystem:${{ matrix.illuminate }} \
             illuminate/http:${{ matrix.illuminate }} \
             illuminate/routing:${{ matrix.illuminate }} \
