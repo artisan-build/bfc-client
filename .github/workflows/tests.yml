@@ -53,14 +53,17 @@ jobs:
             illuminate: '11.17.0'
             testbench: '^9.0'
             pest: '^3.0'
+            composer-options: '--ignore-platform-req=php+'
           - laravel: '12'
             illuminate: '^12.0'
             testbench: '^10.0'
             pest: '^3.0'
+            composer-options: ''
           - laravel: '13'
             illuminate: '^13.0'
             testbench: '^11.0'
             pest: '^4.0'
+            composer-options: ''
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -100,7 +103,7 @@ jobs:
             tests/ThinHostConformanceTest.php
 
       - name: Install lowest dependencies
-        run: composer update --prefer-lowest --prefer-stable -W --no-interaction
+        run: composer update --prefer-lowest --prefer-stable -W --no-interaction ${{ matrix.composer-options }}
 
       - name: Show resolved Laravel version
         run: composer show laravel/framework || composer show illuminate/support
