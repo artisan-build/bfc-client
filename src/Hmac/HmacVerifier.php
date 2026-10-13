@@ -33,11 +33,13 @@ final class HmacVerifier
         string $body,
         ?string $audience = null,
     ): VerifiedHmacCredential {
+        [$envelope, $signature] = $this->parseAndPin($header);
         $expectedAudience = $this->configuredAudience($audience);
-        [$envelope, $signature, $tolerance] = $this->validatedEnvelope($header, $expectedAudience);
+        $tolerance = $this->validateAudienceAndTimestamp($envelope, $expectedAudience);
         $credential = $this->credentials->find($envelope->keyId);
 
         if (! $credential instanceof StoredHmacCredential
+            || ! hash_equals($credential->id, $envelope->keyId)
             || ! $credential->isActiveAt(now())
             || ! $credential->exactlyMatchesUnboundSubject($subject)) {
             throw HmacVerificationFailed::unusableKey();
@@ -53,7 +55,8 @@ final class HmacVerifier
         string $header,
         string $body,
     ): VerifiedHmacCredential {
-        [$envelope, $signature, $tolerance] = $this->validatedEnvelope($header, $scope->audience);
+        [$envelope, $signature] = $this->parseAndPin($header);
+        $tolerance = $this->validateAudienceAndTimestamp($envelope, $scope->audience);
 
         if ($this->appPurposes->purpose($scope->appPurpose) !== CredentialPurpose::Signing) {
             throw HmacVerificationFailed::unusableKey();
@@ -63,6 +66,7 @@ final class HmacVerifier
         $role = $credential?->materialRole;
 
         if (! $credential instanceof StoredHmacCredential
+            || ! hash_equals($credential->id, $envelope->keyId)
             || ! $credential->isActiveAt(now())
             || ! $role instanceof CredentialMaterialRole
             || ! in_array($role, [CredentialMaterialRole::Originator, CredentialMaterialRole::VerificationCopy], true)
@@ -75,8 +79,8 @@ final class HmacVerifier
         return new VerifiedHmacCredential($credential->id, $scope);
     }
 
-    /** @return array{HmacEnvelope, string, int} */
-    private function validatedEnvelope(string $header, string $expectedAudience): array
+    /** @return array{HmacEnvelope, string} */
+    private function parseAndPin(string $header): array
     {
         [$envelope, $claimedAlgorithm, $signature] = HmacEnvelope::parse($header);
 
@@ -84,6 +88,11 @@ final class HmacVerifier
             throw HmacVerificationFailed::algorithmRejected($claimedAlgorithm);
         }
 
+        return [$envelope, $signature];
+    }
+
+    private function validateAudienceAndTimestamp(HmacEnvelope $envelope, string $expectedAudience): int
+    {
         if (! hash_equals($expectedAudience, $envelope->audience)) {
             throw HmacVerificationFailed::wrongAudience();
         }
@@ -94,7 +103,7 @@ final class HmacVerifier
             throw HmacVerificationFailed::staleTimestamp($tolerance);
         }
 
-        return [$envelope, $signature, $tolerance];
+        return $tolerance;
     }
 
     private function verifySignatureAndConsume(
@@ -131,17 +140,18 @@ final class HmacVerifier
         int $tolerance,
     ): void {
         $windowSeconds = $tolerance * 2 + 60;
-        $nonceKey = 'bfc:hmac:nonce:'.hash('sha256', $envelope->keyId.'|'.$envelope->nonce);
+        $nonceKey = 'bfc:hmac:nonce:'.hash('sha256', $credential->id.'|'.$envelope->nonce);
 
         if (Cache::has($nonceKey)) {
             throw HmacVerificationFailed::replayedNonce();
         }
 
         $ceiling = $this->configuration->verificationRateCeiling();
-        $rateKey = 'bfc:hmac:rate:'.$envelope->keyId;
+        $rateKey = 'bfc:hmac:rate:'.$credential->id;
         Cache::add($rateKey, 0, $windowSeconds);
 
         if ((int) Cache::increment($rateKey) > $ceiling) {
+            Cache::decrement($rateKey);
             throw HmacVerificationFailed::rateLimited($ceiling);
         }
 

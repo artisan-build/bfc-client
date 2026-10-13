@@ -89,7 +89,13 @@ final class InstallHmacCredentialFromClaim
         $locked = [];
 
         foreach ($ids as $id) {
-            $locked[$id] = $this->credentials->find($id, lockForUpdate: true);
+            $credential = $this->credentials->find($id, lockForUpdate: true);
+
+            if ($credential !== null && ! hash_equals($credential->id, $id)) {
+                throw new HmacCredentialTransferRefused;
+            }
+
+            $locked[$id] = $credential;
         }
 
         $plaintext = $claimed->secret->reveal();
@@ -173,6 +179,7 @@ final class InstallHmacCredentialFromClaim
         $credential = $this->credentials->find($credentialId);
 
         if (! $credential instanceof StoredHmacCredential
+            || ! hash_equals($credential->id, $credentialId)
             || $credential->purpose !== CredentialPurpose::Signing
             || $credential->status !== CredentialStatus::Active
             || ! hash_equals($credential->deliveryFingerprint, $fingerprint)

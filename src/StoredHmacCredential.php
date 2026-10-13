@@ -7,8 +7,10 @@ namespace ArtisanBuild\BfcClient;
 use ArtisanBuild\BfcClient\Hmac\HmacEnvelope;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
+use JsonSerializable;
+use LogicException;
 
-final readonly class StoredHmacCredential
+final readonly class StoredHmacCredential implements JsonSerializable
 {
     public function __construct(
         public string $id,
@@ -78,5 +80,16 @@ final readonly class StoredHmacCredential
         }
 
         return hash('sha256', $preimage);
+    }
+
+    /** @return array<string, mixed> */
+    public function __serialize(): array
+    {
+        throw new LogicException('A stored HMAC credential never serializes.');
+    }
+
+    public function jsonSerialize(): never
+    {
+        throw new LogicException('A stored HMAC credential never JSON-encodes.');
     }
 }

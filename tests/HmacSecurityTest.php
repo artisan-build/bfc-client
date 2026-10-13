@@ -27,6 +27,8 @@ use ArtisanBuild\BfcClient\StoredHmacCredential;
 use ArtisanBuild\BfcClient\Subject;
 use ArtisanBuild\BfcClient\SubjectType;
 use Carbon\CarbonImmutable;
+use Illuminate\Cache\ArrayStore;
+use Illuminate\Cache\Repository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -203,6 +205,8 @@ final class RecordingHmacCredentialStore implements HmacCredentialStore
 
     public bool $allowAfterSignature = true;
 
+    public bool $caseInsensitiveFind = false;
+
     public function __construct(private readonly HmacCredentialStore $delegate) {}
 
     public function transaction(Closure $operation): mixed
@@ -216,7 +220,13 @@ final class RecordingHmacCredentialStore implements HmacCredentialStore
     {
         $this->finds++;
 
-        return $this->delegate->find($credentialId, $lockForUpdate);
+        $credential = $this->delegate->find($credentialId, $lockForUpdate);
+
+        if ($credential === null && $this->caseInsensitiveFind) {
+            return $this->delegate->find(strtolower($credentialId), $lockForUpdate);
+        }
+
+        return $credential;
     }
 
     public function insertVerificationCopy(StoredHmacCredential $credential): void
@@ -249,6 +259,101 @@ final class RecordingHmacCredentialStore implements HmacCredentialStore
     {
         return $this->delegate->isConcurrencyConflict($failure);
     }
+}
+
+final class ClassifiedStoreConflict extends RuntimeException {}
+
+final class ConflictAfterInsertHmacCredentialStore implements HmacCredentialStore
+{
+    public function __construct(
+        private readonly HmacCredentialStore $delegate,
+        private readonly bool $changeFingerprint = false,
+        private readonly bool $lowercaseId = false,
+    ) {}
+
+    public function transaction(Closure $operation): mixed
+    {
+        return $operation();
+    }
+
+    public function find(string $credentialId, bool $lockForUpdate = false): ?StoredHmacCredential
+    {
+        return $this->delegate->find($credentialId, $lockForUpdate)
+            ?? $this->delegate->find(strtolower($credentialId), $lockForUpdate);
+    }
+
+    public function insertVerificationCopy(StoredHmacCredential $credential): void
+    {
+        $this->delegate->insertVerificationCopy(copyStoredHmacCredential(
+            $credential,
+            id: $this->lowercaseId ? strtolower($credential->id) : $credential->id,
+            fingerprint: $this->changeFingerprint ? str_repeat('0', 16) : $credential->deliveryFingerprint,
+        ));
+
+        throw new ClassifiedStoreConflict('classified conflict');
+    }
+
+    public function allowsAfterSignature(StoredHmacCredential $credential): bool
+    {
+        return $this->delegate->allowsAfterSignature($credential);
+    }
+
+    public function stampUsage(string $credentialId, CarbonImmutable $usedAt): void
+    {
+        $this->delegate->stampUsage($credentialId, $usedAt);
+    }
+
+    public function hasKeyVersionOtherThan(string $writeVersion): bool
+    {
+        return $this->delegate->hasKeyVersionOtherThan($writeVersion);
+    }
+
+    public function isConcurrencyConflict(Throwable $failure): bool
+    {
+        return $failure instanceof ClassifiedStoreConflict;
+    }
+}
+
+final class ReentrantRaceArrayStore extends ArrayStore
+{
+    public ?Closure $afterIncrement = null;
+
+    public function increment($key, $value = 1)
+    {
+        $result = parent::increment($key, $value);
+
+        if ($value === 1 && $this->afterIncrement !== null) {
+            ($this->afterIncrement)($key);
+        }
+
+        return $result;
+    }
+}
+
+function copyStoredHmacCredential(
+    StoredHmacCredential $credential,
+    ?string $id = null,
+    ?string $fingerprint = null,
+): StoredHmacCredential {
+    return new StoredHmacCredential(
+        id: $id ?? $credential->id,
+        purpose: $credential->purpose,
+        subject: $credential->subject,
+        status: $credential->status,
+        secretCiphertext: $credential->secretCiphertext,
+        secretKeyVersion: $credential->secretKeyVersion,
+        deliveredAt: $credential->deliveredAt,
+        deliveryGeneration: $credential->deliveryGeneration,
+        deliveryFingerprint: $fingerprint ?? $credential->deliveryFingerprint,
+        predecessorCredentialId: $credential->predecessorCredentialId,
+        activatedAt: $credential->activatedAt,
+        expiresAt: $credential->expiresAt,
+        revokedAt: $credential->revokedAt,
+        scope: $credential->scope,
+        materialRole: $credential->materialRole,
+        algorithm: $credential->algorithm,
+        scopeHash: $credential->scopeHash,
+    );
 }
 
 it('discovers the receiver migrations and resolves its public services', function (): void {
@@ -746,3 +851,293 @@ it('reports keyring cutover for null and non-primary stored key versions', funct
     ]);
     expect($keyring->cutoverInProgress())->toBeTrue();
 });
+
+it('refuses case-insensitive credential aliases before verification state effects', function (): void {
+    $scope = clientHmacScope();
+    $key = bin2hex(random_bytes(32));
+    $id = strtolower((string) Str::uuid());
+    $credential = storedClientHmac($scope, $key, id: $id);
+    $recording = new RecordingHmacCredentialStore(app(HmacCredentialStore::class));
+    $recording->caseInsensitiveFind = true;
+    app()->instance(HmacCredentialStore::class, $recording);
+    $nonce = bin2hex(random_bytes(16));
+    $aliasedEnvelope = new HmacEnvelope(
+        strtoupper($id),
+        'matte.completed',
+        now()->getTimestamp(),
+        $nonce,
+        $scope->audience,
+    );
+    $header = $aliasedEnvelope->headerValue(hash_hmac('sha256', $aliasedEnvelope->canonical('body'), $key));
+
+    expect(hmacFailureReason(fn () => app(HmacVerifier::class)->verifyBound($scope, $header, 'body')))
+        ->toBe('unusable_key')
+        ->and($recording->admissions)->toBe(0)
+        ->and($recording->usageStamps)->toBe(0)
+        ->and(Cache::has('bfc:hmac:rate:'.$id))->toBeFalse()
+        ->and(Cache::has('bfc:hmac:rate:'.strtoupper($id)))->toBeFalse()
+        ->and(Cache::has('bfc:hmac:nonce:'.hash('sha256', $id.'|'.$nonce)))->toBeFalse()
+        ->and($credential->refresh()->last_used_at)->toBeNull();
+
+    $unboundId = strtolower((string) Str::uuid());
+    $unboundKey = bin2hex(random_bytes(32));
+    $unbound = storedClientHmac($scope, $unboundKey, role: null, id: $unboundId);
+    $unboundEnvelope = new HmacEnvelope(
+        strtoupper($unboundId),
+        'matte.completed',
+        now()->getTimestamp(),
+        bin2hex(random_bytes(16)),
+        $scope->audience,
+    );
+    $unboundHeader = $unboundEnvelope->headerValue(hash_hmac('sha256', $unboundEnvelope->canonical('body'), $unboundKey));
+    config()->set('bfc-client.hmac.audience', $scope->audience);
+
+    expect(hmacFailureReason(fn () => app(HmacVerifier::class)->verify($scope->subject, $unboundHeader, 'body')))
+        ->toBe('unusable_key')
+        ->and($recording->admissions)->toBe(0)
+        ->and($recording->usageStamps)->toBe(0)
+        ->and($unbound->refresh()->last_used_at)->toBeNull();
+});
+
+it('refuses case-insensitive install and predecessor aliases', function (): void {
+    $scope = clientHmacScope();
+    $key = bin2hex(random_bytes(32));
+    $id = strtolower((string) Str::uuid());
+    storedClientHmac($scope, $key, id: $id, generation: 4);
+    $recording = new RecordingHmacCredentialStore(app(HmacCredentialStore::class));
+    $recording->caseInsensitiveFind = true;
+    app()->instance(HmacCredentialStore::class, $recording);
+    $before = HmacCredential::query()->count();
+
+    expect(fn () => app(InstallHmacCredentialFromClaim::class)(
+        $scope,
+        clientIssuer(clientClaimed($scope, $key, ['id' => strtoupper($id)])),
+        bin2hex(random_bytes(32)),
+    ))->toThrow(HmacCredentialTransferRefused::class)
+        ->and(HmacCredential::query()->count())->toBe($before);
+
+    expect(fn () => app(InstallHmacCredentialFromClaim::class)(
+        $scope,
+        clientIssuer(clientClaimed($scope, bin2hex(random_bytes(32)), [
+            'predecessor' => strtoupper($id),
+            'generation' => 5,
+        ])),
+        bin2hex(random_bytes(32)),
+    ))->toThrow(HmacCredentialTransferRefused::class)
+        ->and(HmacCredential::query()->count())->toBe($before);
+});
+
+it('recovers only an exact classified conflict and refuses conflict or identity aliases', function (): void {
+    $scope = clientHmacScope();
+    $delegate = app(HmacCredentialStore::class);
+    $key = bin2hex(random_bytes(32));
+    $id = (string) Str::uuid();
+    app()->instance(HmacCredentialStore::class, new ConflictAfterInsertHmacCredentialStore($delegate));
+
+    $installed = app(InstallHmacCredentialFromClaim::class)(
+        $scope,
+        clientIssuer(clientClaimed($scope, $key, ['id' => $id])),
+        bin2hex(random_bytes(32)),
+    );
+    expect($installed->credentialId)->toBe($id);
+
+    $conflictingId = (string) Str::uuid();
+    app()->instance(HmacCredentialStore::class, new ConflictAfterInsertHmacCredentialStore($delegate, changeFingerprint: true));
+    expect(fn () => app(InstallHmacCredentialFromClaim::class)(
+        $scope,
+        clientIssuer(clientClaimed($scope, bin2hex(random_bytes(32)), ['id' => $conflictingId])),
+        bin2hex(random_bytes(32)),
+    ))->toThrow(HmacCredentialTransferRefused::class);
+
+    $aliasedId = strtoupper((string) Str::uuid());
+    app()->instance(HmacCredentialStore::class, new ConflictAfterInsertHmacCredentialStore($delegate, lowercaseId: true));
+    expect(fn () => app(InstallHmacCredentialFromClaim::class)(
+        $scope,
+        clientIssuer(clientClaimed($scope, bin2hex(random_bytes(32)), ['id' => $aliasedId])),
+        bin2hex(random_bytes(32)),
+    ))->toThrow(HmacCredentialTransferRefused::class)
+        ->and(HmacCredential::query()->whereKey(strtolower($aliasedId))->exists())->toBeTrue();
+});
+
+it('preserves unbound parse and algorithm refusal precedence without state effects', function (): void {
+    $scope = clientHmacScope();
+    $recording = new RecordingHmacCredentialStore(app(HmacCredentialStore::class));
+    app()->instance(HmacCredentialStore::class, $recording);
+    $keyId = (string) Str::uuid();
+    $nonce = bin2hex(random_bytes(16));
+    $envelope = new HmacEnvelope($keyId, 'event', now()->getTimestamp(), $nonce, $scope->audience);
+    $unsupported = str_replace(
+        'alg=hmac-sha256',
+        'alg=hmac-sha1',
+        $envelope->headerValue(str_repeat('0', 64)),
+    );
+
+    config()->set('bfc-client.hmac.audience', null);
+    expect(hmacFailureReason(fn () => app(HmacVerifier::class)->verify($scope->subject, 'not-a-header', 'body')))
+        ->toBe('malformed_header')
+        ->and(hmacFailureReason(fn () => app(HmacVerifier::class)->verify($scope->subject, $unsupported, 'body')))
+        ->toBe('algorithm_rejected');
+
+    config()->set('bfc-client.hmac.audience', $scope->audience);
+    expect(hmacFailureReason(fn () => app(HmacVerifier::class)->verify(
+        $scope->subject,
+        $unsupported,
+        'body',
+        'https://caller-mismatch.example',
+    )))->toBe('algorithm_rejected')
+        ->and($recording->finds)->toBe(0)
+        ->and($recording->admissions)->toBe(0)
+        ->and($recording->usageStamps)->toBe(0)
+        ->and(Cache::has('bfc:hmac:rate:'.$keyId))->toBeFalse()
+        ->and(Cache::has('bfc:hmac:nonce:'.hash('sha256', $keyId.'|'.$nonce)))->toBeFalse();
+});
+
+it('refunds every over-ceiling duplicate race increment', function (): void {
+    config()->set('bfc-client.hmac.verification_rate_ceiling', 3);
+    $scope = clientHmacScope();
+    $key = bin2hex(random_bytes(32));
+    $credential = storedClientHmac($scope, $key);
+    $store = new ReentrantRaceArrayStore;
+    Cache::swap(new Repository($store));
+    $verifier = app(HmacVerifier::class);
+    $seed = signedClientHeader($credential, $key, $scope, 'seed');
+    $verifier->verifyBound($scope, $seed, 'seed');
+    $rateKey = 'bfc:hmac:rate:'.$credential->id;
+    $raceHeader = signedClientHeader($credential, $key, $scope, 'race');
+    $outcomes = [];
+    $triggers = 0;
+    $run = function () use ($verifier, $scope, $raceHeader, &$outcomes): void {
+        try {
+            $verifier->verifyBound($scope, $raceHeader, 'race');
+            $outcomes[] = 'accepted';
+        } catch (HmacVerificationFailed $failure) {
+            $outcomes[] = $failure->reason;
+        }
+    };
+    $store->afterIncrement = function (string $key) use ($rateKey, &$triggers, $run): void {
+        if ($key === $rateKey && $triggers < 2) {
+            $triggers++;
+            $run();
+        }
+    };
+
+    $run();
+    $store->afterIncrement = null;
+    sort($outcomes);
+
+    expect($outcomes)->toBe(['accepted', 'rate_limited', 'replayed_nonce'])
+        ->and(Cache::get($rateKey))->toBe(2);
+
+    $fresh = signedClientHeader($credential, $key, $scope, 'fresh');
+    expect($verifier->verifyBound($scope, $fresh, 'fresh')->credentialId)->toBe($credential->id)
+        ->and(Cache::get($rateKey))->toBe(3);
+});
+
+it('seals stored credential records against PHP and JSON serialization', function (): void {
+    $scope = clientHmacScope();
+    $credential = storedClientHmac($scope, bin2hex(random_bytes(32)));
+    $record = app(HmacCredentialStore::class)->find($credential->id);
+
+    expect($record)->toBeInstanceOf(StoredHmacCredential::class)
+        ->and(fn () => serialize($record))->toThrow(LogicException::class)
+        ->and(fn () => json_encode($record, JSON_THROW_ON_ERROR))->toThrow(LogicException::class);
+});
+
+it('normalizes every keyring configuration failure without state effects', function (): void {
+    $scope = clientHmacScope();
+    $key = bin2hex(random_bytes(32));
+    $credential = storedClientHmac($scope, $key);
+    $header = signedClientHeader($credential, $key, $scope, 'body');
+    $original = $credential->getRawOriginal();
+    $originalAppKey = (string) config('app.key');
+    $recording = new RecordingHmacCredentialStore(app(HmacCredentialStore::class));
+    app()->instance(HmacCredentialStore::class, $recording);
+    $cases = [
+        'unsupported cipher' => function () use ($originalAppKey): void {
+            config()->set('app.key', $originalAppKey);
+            config()->set('app.previous_keys', []);
+            config()->set('app.cipher', 'unsupported-cipher');
+        },
+        'absent application key' => function (): void {
+            config()->set('app.key', null);
+            config()->set('app.previous_keys', []);
+            config()->set('app.cipher', 'AES-256-CBC');
+        },
+        'malformed previous key' => function (): void {
+            config()->set('app.key', 'base64:'.base64_encode(random_bytes(32)));
+            config()->set('app.previous_keys', ['base64:not-valid%%%']);
+            config()->set('app.cipher', 'AES-256-CBC');
+        },
+        'matching wrong-length key' => function () use ($credential): void {
+            $shortKey = 'short';
+            config()->set('app.key', $shortKey);
+            config()->set('app.previous_keys', []);
+            config()->set('app.cipher', 'AES-256-CBC');
+            DB::table('bfc_client_hmac_credentials')->where('id', $credential->id)->update([
+                'secret_key_version' => HmacKeyring::fingerprint($shortKey),
+            ]);
+        },
+    ];
+
+    foreach ($cases as $label => $configure) {
+        DB::table('bfc_client_hmac_credentials')->where('id', $credential->id)->update([
+            'secret_ciphertext' => $original['secret_ciphertext'],
+            'secret_key_version' => $original['secret_key_version'],
+        ]);
+        $configure();
+
+        try {
+            app(HmacVerifier::class)->verifyBound($scope, $header, 'body');
+            $this->fail($label.' should have failed.');
+        } catch (HmacKeyUnreadable $failure) {
+            expect($failure->getMessage())->not->toContain($key, (string) $original['secret_ciphertext']);
+        }
+    }
+
+    expect($recording->admissions)->toBe(0)
+        ->and($recording->usageStamps)->toBe(0)
+        ->and(Cache::has('bfc:hmac:rate:'.$credential->id))->toBeFalse()
+        ->and($credential->refresh()->last_used_at)->toBeNull();
+});
+
+it('does not call post-signature admission for an invalid signature and keeps rate budgets per key', function (): void {
+    config()->set('bfc-client.hmac.verification_rate_ceiling', 1);
+    $scope = clientHmacScope();
+    $firstKey = bin2hex(random_bytes(32));
+    $first = storedClientHmac($scope, $firstKey);
+    $secondKey = bin2hex(random_bytes(32));
+    $second = storedClientHmac($scope, $secondKey);
+    $recording = new RecordingHmacCredentialStore(app(HmacCredentialStore::class));
+    app()->instance(HmacCredentialStore::class, $recording);
+    $invalid = signedClientHeader($first, $firstKey, $scope, 'invalid');
+    $invalid = substr($invalid, 0, -1).($invalid[-1] === '0' ? '1' : '0');
+
+    expect(hmacFailureReason(fn () => app(HmacVerifier::class)->verifyBound($scope, $invalid, 'invalid')))
+        ->toBe('invalid_signature')
+        ->and($recording->admissions)->toBe(0)
+        ->and($recording->usageStamps)->toBe(0);
+
+    $verifier = app(HmacVerifier::class);
+    $verifier->verifyBound($scope, signedClientHeader($first, $firstKey, $scope, 'first'), 'first');
+    expect(hmacFailureReason(fn () => $verifier->verifyBound(
+        $scope,
+        signedClientHeader($first, $firstKey, $scope, 'overflow'),
+        'overflow',
+    )))->toBe('rate_limited');
+
+    expect($verifier->verifyBound(
+        $scope,
+        signedClientHeader($second, $secondKey, $scope, 'independent'),
+        'independent',
+    )->credentialId)->toBe($second->id);
+});
+
+it('refuses malformed bound scope strings', function (Closure $scope): void {
+    expect($scope)->toThrow(InvalidArgumentException::class);
+})->with([
+    'invalid UTF-8' => fn (): BoundCredentialScope => clientHmacScope(appPurpose: "bad\xC3\x28"),
+    'control character' => fn (): BoundCredentialScope => clientHmacScope(subjectRef: "bad\nsubject"),
+    'field longer than 255 bytes' => fn (): BoundCredentialScope => clientHmacScope(installation: str_repeat('a', 256)),
+    'audience comma' => fn (): BoundCredentialScope => clientHmacScope(audience: 'https://client.example/callback,other'),
+    'audience whitespace' => fn (): BoundCredentialScope => clientHmacScope(audience: 'https://client.example/call back'),
+]);
